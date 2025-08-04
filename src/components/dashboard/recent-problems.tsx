@@ -74,7 +74,7 @@ export default function RecentProblems() {
       <CardContent>
         <div className="space-y-4">
           {problems && problems.length > 0 ? (
-            problems.map((problem) => (
+            (Array.isArray(problems) ? problems : []).map((problem) => (
               <div key={`${problem.id}-${problem.date}`} className="p-4 rounded-lg border border-border bg-card/30 hover:bg-card/50 transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">

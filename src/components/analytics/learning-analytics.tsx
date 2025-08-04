@@ -101,7 +101,7 @@ export default function LearningAnalytics() {
         </CardHeader>
         <CardContent>
           <div className="space-y-6">
-            {(performanceData && performanceData.length > 0) ? (
+            {(performanceData && Array.isArray(performanceData) && performanceData.length > 0) ? (
               performanceData.map((item, index) => (
                 <div key={index} className="space-y-2">
                   <div className="flex items-center justify-between">

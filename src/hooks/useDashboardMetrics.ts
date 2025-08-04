@@ -70,7 +70,7 @@ async function fetchFromSupabase<T>(table: string, query?: string): Promise<T[]>
     throw new Error(`Failed to fetch ${table}: ${error.message}`);
   }
   
-  return data || [];
+  return Array.isArray(data) ? data : [];
 }
 
 // Fetch all problem metrics
@@ -221,6 +221,12 @@ export function usePerformanceAnalytics() {
     queryFn: async () => {
       const metrics = await fetchFromSupabase<ProblemMetric>('problem_metrics');
       const problems = await fetchFromSupabase<any>('problems');
+      
+      // Add null checks
+      if (!Array.isArray(problems) || !Array.isArray(metrics)) {
+        console.warn('Performance analytics: Invalid data structure', { problems, metrics });
+        return [];
+      }
       
       // Group by difficulty
       const performanceByDifficulty = problems.reduce((acc: any, problem: any) => {

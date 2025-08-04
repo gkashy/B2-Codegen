@@ -210,7 +210,7 @@ export default function ProblemBrowser() {
       )}
 
       {/* Problems grid */}
-      {filteredProblems.length > 0 && (
+      {Array.isArray(filteredProblems) && filteredProblems.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredProblems.map((problem) => {
           const difficultyInfo = getDifficultyInfo(problem);

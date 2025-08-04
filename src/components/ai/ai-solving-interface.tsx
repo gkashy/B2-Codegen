@@ -62,7 +62,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     if (!problem) return [];
     
     // Prioritize relational test cases from separate table - FILTER OUT AI GENERATED
-    if (problem.test_cases_data && problem.test_cases_data.length > 0) {
+    if (problem.test_cases_data && Array.isArray(problem.test_cases_data) && problem.test_cases_data.length > 0) {
       return problem.test_cases_data
         .filter((tc: any) => tc.source !== 'llm_generated') // Only show original test cases
         .map((tc: any) => ({
@@ -75,7 +75,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     }
     
     // Fallback to parsed test cases from problem definition
-    if (problem.legacy_test_cases && problem.legacy_test_cases.length > 0) {
+    if (problem.legacy_test_cases && Array.isArray(problem.legacy_test_cases) && problem.legacy_test_cases.length > 0) {
       return problem.legacy_test_cases.map((tc: any, index: number) => ({
         input: tc.slice(0, -1),
         expected: tc[tc.length - 1],
@@ -92,7 +92,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
   const getAIGeneratedTestCases = () => {
     if (!problem || !problem.test_cases_data) return [];
     
-    return problem.test_cases_data
+    return (Array.isArray(problem.test_cases_data) ? problem.test_cases_data : [])
       .filter((tc: any) => tc.source === 'llm_generated') // Only AI generated cases
       .map((tc: any) => ({
         input_data: tc.input_data,
