@@ -48,9 +48,21 @@ class APIService {
    * Get single problem by ID
    */
   async getProblem(id: number): Promise<Problem> {
+    // Fetch problem with related test cases from separate table
     const { data, error } = await supabase
       .from('problems')
-      .select('*')
+      .select(`
+        *,
+        test_cases_relation:test_cases(
+          id,
+          input_data,
+          expected_output,
+          difficulty_level,
+          source,
+          is_active,
+          created_at
+        )
+      `)
       .eq('id', id)
       .single();
     
@@ -58,7 +70,98 @@ class APIService {
       throw new APIError('Failed to fetch problem', 404, error);
     }
     
-    return data;
+    // Transform the relational data to match expected format
+    const problem = {
+      ...data,
+      // Keep the original test_cases field for legacy compatibility
+      // Add the new relational test cases as an array
+      test_cases_data: data.test_cases_relation || [],
+      // Parse legacy test_cases if it exists
+      legacy_test_cases: data.test_cases ? this.parseLegacyTestCases(data.test_cases) : []
+    };
+    
+    return problem;
+  }
+
+  // Helper to parse legacy test case format
+  private parseLegacyTestCases(testCasesString: string): any[] {
+    try {
+      // Handle format: "([2, 7, 11, 15], 9, [0, 1]), ([3, 2, 4], 6, [1, 2])"
+      if (!testCasesString || typeof testCasesString !== 'string') return [];
+      
+      const testCases: any[] = [];
+      // Split by '), (' to get individual test cases
+      const cases = testCasesString.split('), (');
+      for(let i = 0; i < cases.length; i++){
+        let caseStr = cases[i];
+        // Clean up the string
+        caseStr = caseStr.replace(/^\(/, '').replace(/\)$/, '');
+        // Split by comma but be careful with arrays
+        const parts = this.smartSplit(caseStr);
+        testCases.push(parts);
+      }
+      return testCases;
+    } catch (error) {
+      console.error('Error parsing legacy test cases:', error);
+      return [];
+    }
+  }
+
+  // Helper for smart splitting (from smart-handler.ts logic)
+  private smartSplit(str: string): any[] {
+    const parts: any[] = [];
+    let current = '';
+    let depth = 0;
+    let inQuotes = false;
+    let quoteChar = '';
+    
+    for(let i = 0; i < str.length; i++){
+      const char = str[i];
+      if (!inQuotes && (char === '"' || char === "'")) {
+        inQuotes = true;
+        quoteChar = char;
+        current += char;
+      } else if (inQuotes && char === quoteChar) {
+        inQuotes = false;
+        current += char;
+      } else if (!inQuotes && char === '[') {
+        depth++;
+        current += char;
+      } else if (!inQuotes && char === ']') {
+        depth--;
+        current += char;
+      } else if (!inQuotes && char === ',' && depth === 0) {
+        parts.push(this.parseValue(current.trim()));
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim()) {
+      parts.push(this.parseValue(current.trim()));
+    }
+    return parts;
+  }
+
+  private parseValue(str: string): any {
+    str = str.trim();
+    // Handle arrays
+    if (str.startsWith('[') && str.endsWith(']')) {
+      try {
+        return JSON.parse(str);
+      } catch {
+        return str;
+      }
+    }
+    // Handle strings
+    if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'"))) {
+      return str.slice(1, -1);
+    }
+    // Handle numbers
+    if (!isNaN(Number(str))) {
+      return Number(str);
+    }
+    return str;
   }
   
   // ============ AI CODE GENERATION ============

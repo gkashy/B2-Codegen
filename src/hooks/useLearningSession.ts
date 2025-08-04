@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useCallback } from 'react'
 import { apiService } from '@/lib/api'
 import { ReinforcementResponse } from '@/types/backend'

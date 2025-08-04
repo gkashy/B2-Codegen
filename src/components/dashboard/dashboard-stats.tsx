@@ -1,54 +1,85 @@
+'use client';
+
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Brain, Target, Clock, TrendingUp, Zap, Trophy } from 'lucide-react';
+import { Brain, Target, Clock, TrendingUp, Zap, Trophy, Loader2 } from 'lucide-react';
+import { useDashboardMetrics } from '@/hooks/useDashboardMetrics';
 
 export default function DashboardStats() {
+  const { metrics, loading, error } = useDashboardMetrics();
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[...Array(6)].map((_, i) => (
+          <Card key={i} className="border-border bg-card/50 backdrop-blur-sm">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-center h-20">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center p-8 text-red-500">
+        <p>Failed to load dashboard metrics: {error}</p>
+      </div>
+    );
+  }
+
+  if (!metrics) return null;
+
   const stats = [
     {
       title: 'Problems Solved',
-      value: '24',
-      change: '+3 today',
+      value: metrics.solvedProblems.toString(),
+      change: `${metrics.totalProblems} total`,
       icon: Target,
       color: 'text-green-500',
       bgColor: 'bg-green-500/10'
     },
     {
       title: 'AI Sessions',
-      value: '47',
-      change: '+8 this week',
+      value: metrics.recentActivity.totalSessions.toString(),
+      change: `${Math.round(metrics.recentActivity.weeklyImprovement)}% success rate`,
       icon: Brain,
       color: 'text-blue-500',
       bgColor: 'bg-blue-500/10'
     },
     {
-      title: 'Time Saved',
-      value: '12.5h',
-      change: '+2.3h today',
+      title: 'Test Cases',
+      value: metrics.totalTestCases.toString(),
+      change: `${metrics.aiGeneratedTestCases} AI generated`,
       icon: Clock,
       color: 'text-purple-500',
       bgColor: 'bg-purple-500/10'
     },
     {
       title: 'Success Rate',
-      value: '87%',
-      change: '+5% this week',
+      value: `${Math.round(metrics.averageSuccessRate)}%`,
+      change: `${metrics.totalAttempts} attempts`,
       icon: TrendingUp,
       color: 'text-emerald-500',
       bgColor: 'bg-emerald-500/10'
     },
     {
-      title: 'Learning Streak',
-      value: '15 days',
-      change: 'Keep it up!',
+      title: 'Avg Difficulty',
+      value: metrics.averageDifficultyScore.toFixed(1),
+      change: 'out of 10.0',
       icon: Zap,
       color: 'text-yellow-500',
       bgColor: 'bg-yellow-500/10'
     },
     {
-      title: 'Achievements',
-      value: '12',
-      change: '+2 unlocked',
+      title: 'Problems Available',
+      value: metrics.totalProblems.toString(),
+      change: 'in database',
       icon: Trophy,
       color: 'text-orange-500',
       bgColor: 'bg-orange-500/10'

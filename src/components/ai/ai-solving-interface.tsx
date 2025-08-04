@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Brain, 
@@ -22,7 +22,12 @@ import {
   FileCode,
   Shield,
   ArrowRight,
-  User
+  User,
+  Monitor,
+  Settings,
+  TestTube,
+  Sparkles,
+  Target
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,7 +39,11 @@ import { useCodeTesting } from '@/hooks/useCodeTesting';
 import { useLearningSession } from '@/hooks/useLearningSession';
 import { useProblem } from '@/hooks/useQueries';
 import { useCodeEditing } from '@/hooks/useCodeEditing';
+import { useAnalyzeFix } from '@/hooks/useAnalyzeFix';
+import { useTestCaseGeneration } from '@/hooks/useTestCaseGeneration';
 import { Problem } from '@/types/backend';
+import StreamingModal from './streaming-modal';
+import { TestCasePreviewModal } from './test-case-preview-modal';
 
 interface AISolvingInterfaceProps {
   problemId: number;
@@ -47,7 +56,53 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
   const [displayCode, setDisplayCode] = useState('');
   const [autoMode, setAutoMode] = useState(false);  // NEW: Toggle for auto-mode
   const [showFixButton, setShowFixButton] = useState(false);  // NEW: Show fix button when tests fail
-  
+
+  // Helper function to get ONLY original/problem test cases (exclude AI generated)
+  const getAvailableTestCases = () => {
+    if (!problem) return [];
+    
+    // Prioritize relational test cases from separate table - FILTER OUT AI GENERATED
+    if (problem.test_cases_data && problem.test_cases_data.length > 0) {
+      return problem.test_cases_data
+        .filter((tc: any) => tc.source !== 'llm_generated') // Only show original test cases
+        .map((tc: any) => ({
+          input: Array.isArray(tc.input_data) ? tc.input_data : [tc.input_data],
+          expected: tc.expected_output,
+          source: tc.source || 'Original',
+          difficulty: tc.difficulty_level || 'Medium',
+          id: tc.id
+        }));
+    }
+    
+    // Fallback to parsed test cases from problem definition
+    if (problem.legacy_test_cases && problem.legacy_test_cases.length > 0) {
+      return problem.legacy_test_cases.map((tc: any, index: number) => ({
+        input: tc.slice(0, -1),
+        expected: tc[tc.length - 1],
+        source: 'Original',
+        difficulty: 'Medium',
+        id: `original-${index}`
+      }));
+    }
+    
+    return [];
+  };
+
+  // NEW: Helper function to get ONLY AI generated test cases
+  const getAIGeneratedTestCases = () => {
+    if (!problem || !problem.test_cases_data) return [];
+    
+    return problem.test_cases_data
+      .filter((tc: any) => tc.source === 'llm_generated') // Only AI generated cases
+      .map((tc: any) => ({
+        input_data: tc.input_data,
+        expected_output: tc.expected_output,
+        difficulty_level: tc.difficulty_level || 'Medium',
+        explanation: tc.generation_reasoning || 'AI generated test case',
+        id: tc.id
+      }));
+  };
+
   // NEW: Multi-agent UI state
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const [agentOutputs, setAgentOutputs] = useState<{
@@ -62,6 +117,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     reviewer: ''
   });
   const [completedAgents, setCompletedAgents] = useState<string[]>([]);
+  const [showStreamingModal, setShowStreamingModal] = useState(false);
   
   // Backend hooks
   const { data: problem, isLoading: problemLoading } = useProblem(problemId);
@@ -79,6 +135,62 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     saveCode, 
     updateEditedCode 
   } = useCodeEditing();
+  
+  // NEW: Analyze & Fix functionality
+  const { 
+    analyzeAndFix, 
+    isAnalyzing, 
+    analysisResult, 
+    error: analysisError,
+    clearResults: clearAnalysisResults 
+  } = useAnalyzeFix();
+  
+  // NEW: Test case generation functionality
+  const { 
+    generateTestCases,
+    isGenerating: isGeneratingTestCases,
+    generationError,
+    lastGenerated,
+    saveTestCases,
+    isSaving: isSavingTestCases,
+    savingError,
+    resetGeneration
+  } = useTestCaseGeneration();
+  
+  // NEW: Preview modal state
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [previewTestCases, setPreviewTestCases] = useState<any[]>([]);
+  const [showAllProblemCases, setShowAllProblemCases] = useState(false);
+  const [showAllAICases, setShowAllAICases] = useState(false);
+
+  // Calculate available test cases after problem is loaded
+  const availableTestCases = useMemo(() => {
+    return getAvailableTestCases();
+  }, [problem]);
+
+  // Calculate all AI test cases (saved + newly generated)
+  // FIXED: Now properly separates AI-generated (source='llm_generated') from original test cases
+  const allAITestCases = useMemo(() => {
+    const savedAITestCases = getAIGeneratedTestCases(); // From database with source='llm_generated'
+    const newTestCases = previewTestCases; // Newly generated, not yet saved
+    
+    // Combine saved and new test cases, avoiding duplicates by content comparison
+    const combined = [...savedAITestCases];
+    
+    // Add new test cases that aren't already saved (avoid duplicates)
+    newTestCases.forEach(newTC => {
+      const alreadyExists = savedAITestCases.some(savedTC => 
+        JSON.stringify(savedTC.input_data) === JSON.stringify(newTC.input_data) &&
+        JSON.stringify(savedTC.expected_output) === JSON.stringify(newTC.expected_output)
+      );
+      
+      if (!alreadyExists) {
+        combined.push(newTC);
+      }
+    });
+    
+    return combined;
+  }, [problem, previewTestCases]);
 
   const handleStartAI = async () => {
     if (!problem) return;
@@ -96,6 +208,9 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       reviewer: ''
     });
     setCompletedAgents([]);
+    
+    // Auto-open streaming modal when AI starts
+    setShowStreamingModal(true);
     
     await startStreaming({
       problem_id: problemId,
@@ -116,6 +231,140 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     
     // Show "Fix & Improve" button if tests fail and we're in manual mode
     setShowFixButton(true);
+  };
+
+  // NEW: Handle analyze and fix functionality
+  const handleAnalyzeAndFix = async () => {
+    if (!displayCode || !problem || !results) return;
+    
+    try {
+      // Clear previous analysis
+      clearAnalysisResults();
+      
+      // Extract failed and passed test cases
+      const failedTests = results.test_results.filter(test => !test.passed);
+      const passedTests = results.test_results.filter(test => test.passed);
+      
+      // Call analyze and fix API
+      const analysisResult = await analyzeAndFix({
+        problem_id: problemId,
+        original_code: displayCode,
+        failed_test_cases: failedTests,
+        passed_test_cases: passedTests,
+        language: selectedLanguage
+      });
+      
+      // Auto-apply the fixed code
+      if (analysisResult.fixed_code) {
+        setDisplayCode(analysisResult.fixed_code);
+        console.log('✅ Code fix applied automatically');
+      }
+      
+    } catch (error) {
+      console.error('❌ Analysis failed:', error);
+    }
+  };
+
+  // NEW: Handle test case generation (preview only)
+  const handleGenerateTestCases = async () => {
+    if (!problem) return;
+    
+    try {
+      const result = await generateTestCases({
+        problem_id: problemId,
+        count: 3, // Generate 3 additional test cases
+        difficulty_level: 'hard',
+        focus_areas: ['edge_cases', 'boundary_conditions', 'corner_cases']
+      });
+      
+      // Show preview modal with generated test cases
+      setPreviewTestCases(result.test_cases || []);
+      setShowPreviewModal(true);
+      
+      console.log('✅ Test cases generated for preview:', result.generated_count);
+    } catch (error) {
+      console.error('❌ Test case generation failed:', error);
+    }
+  };
+
+  // NEW: Handle saving selected test cases from preview
+  const handleSaveTestCases = async (selectedTestCases: any[], closeModal: boolean = true) => {
+    if (!problem) return;
+    
+    try {
+      await saveTestCases({
+        problem_id: problemId,
+        test_cases: selectedTestCases
+      });
+      
+      if (closeModal) {
+        setShowPreviewModal(false);
+        setPreviewTestCases([]);
+      }
+      
+      console.log('✅ Test cases saved successfully:', selectedTestCases.length);
+    } catch (error) {
+      console.error('❌ Test case saving failed:', error);
+    }
+  };
+
+  // NEW: Handle testing with selected test cases
+  const handleTestWithSelected = async (selectedTestCases: any[]) => {
+    if (!displayCode || !problem || selectedTestCases.length === 0) {
+      console.error('❌ Cannot test: missing code, problem, or test cases');
+      return;
+    }
+    
+    console.log('🧪 Testing code against selected test cases:', selectedTestCases.length);
+    
+    try {
+      // Test against specific selected test cases
+      const response = await fetch('/api/test-with-custom-cases', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          problem_id: problemId,
+          solution_code: displayCode,
+          language: selectedLanguage,
+          custom_test_cases: selectedTestCases
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Test failed: ${response.status}`);
+      }
+
+      const testResults = await response.json();
+      console.log('✅ Test results for selected cases:', testResults);
+      
+      // You could display these results in a special modal or section
+      // For now, we'll just log them
+      alert(`Test Results:\n${testResults.passed_tests}/${testResults.total_tests} tests passed`);
+      
+    } catch (error) {
+      console.error('❌ Testing with selected cases failed:', error);
+      // Fallback to regular testing
+      console.log('🔄 Falling back to regular testing...');
+      await testCode({
+        problem_id: problemId,
+        solution_code: displayCode,
+        language: selectedLanguage
+      });
+    }
+  };
+
+  // NEW: Test with newly generated test cases
+  const handleTestWithNewCases = async () => {
+    if (!displayCode || !problem) return;
+    
+    // Run the test again - smart-handler will automatically include new test cases
+    await testCode({
+      problem_id: problemId,
+      solution_code: displayCode,
+      language: selectedLanguage
+    });
   };
 
   const handleStartLearningSession = async () => {
@@ -439,7 +688,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-screen">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-screen">
       {/* Problem Panel */}
       <Card className="lg:col-span-1 flex flex-col h-full">
         <CardHeader className="flex-shrink-0">
@@ -550,16 +799,30 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       </Card>
 
       {/* AI Workspace */}
-      <Card className="lg:col-span-1">
+      <Card className="lg:col-span-2">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center space-x-2">
               <Brain className="w-5 h-5" />
               <span>AI Workspace</span>
             </CardTitle>
-            <div className="flex items-center space-x-2">
-              <div className={`w-[8px] h-[8px] rounded-full ${getStatusColor(status)} ${isStreaming ? 'animate-pulse' : ''}`} />
-              <span className="text-sm text-muted-foreground">{getStatusText(status)}</span>
+            <div className="flex items-center space-x-3">
+              {/* Streaming Modal Button in Header */}
+              {(isStreaming || reasoning || code) && (
+                <Button 
+                  onClick={() => setShowStreamingModal(true)}
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center space-x-1"
+                >
+                  <Monitor className="w-4 h-4" />
+                  <span className="hidden sm:inline">Full View</span>
+                </Button>
+              )}
+              <div className="flex items-center space-x-2">
+                <div className={`w-[8px] h-[8px] rounded-full ${getStatusColor(status)} ${isStreaming ? 'animate-pulse' : ''}`} />
+                <span className="text-sm text-muted-foreground">{getStatusText(status)}</span>
+              </div>
             </div>
           </div>
           <CardDescription>
@@ -568,9 +831,10 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="reasoning" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="reasoning">Reasoning</TabsTrigger>
               <TabsTrigger value="code">Code</TabsTrigger>
+              <TabsTrigger value="testcases">Test Cases</TabsTrigger>
               <TabsTrigger value="session">Session</TabsTrigger>
             </TabsList>
             
@@ -721,8 +985,21 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
                               >
                                 <X className="w-4 h-4 mr-2" />
                                 Cancel
-                              </Button>
-                            </div>
+                                            </Button>
+              
+              {/* Streaming Modal Toggle */}
+              {(isStreaming || reasoning || code) && (
+                <Button 
+                  onClick={() => setShowStreamingModal(true)}
+                  variant={isStreaming ? "default" : "outline"}
+                  className={`w-full ${isStreaming ? 'bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg' : ''}`}
+                >
+                  <Monitor className="w-4 h-4 mr-2" />
+                  {isStreaming ? 'Watch AI Live' : 'View AI Analysis'}
+                  {isStreaming && <div className="ml-2 w-2 h-2 bg-green-400 rounded-full animate-pulse" />}
+                </Button>
+              )}
+            </div>
                           </div>
                         </div>
                       ) : (
@@ -814,6 +1091,311 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
                   )}
                 </div>
               )}
+            </TabsContent>
+            
+            <TabsContent value="testcases" className="space-y-4">
+              <div className="min-h-[400px] space-y-6 max-w-none">
+                
+                {/* Original Test Cases Section */}
+                <div className="space-y-4">
+                  <div className="bg-white dark:bg-gray-900 rounded-lg border border-blue-200 dark:border-blue-800 p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
+                          <TestTube className="w-4 h-4 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100">
+                            Problem Test Cases
+                          </h3>
+                        </div>
+                      </div>
+                      <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-md px-3 py-1">
+                        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                          {availableTestCases.length} cases
+                        </span>
+                      </div>
+                    </div>
+                  
+                  {availableTestCases.length > 0 ? (
+                    <>
+                      <div className="space-y-4">
+                        {availableTestCases.slice(0, showAllProblemCases ? availableTestCases.length : 5).map((testCase, index) => (
+                          <div key={testCase.id || index} className="bg-white dark:bg-gray-800 border border-blue-100 dark:border-blue-800 rounded-lg p-3 hover:border-blue-300 dark:hover:border-blue-600 transition-colors">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-6 h-6 bg-blue-500 rounded text-white text-xs flex items-center justify-center font-medium">
+                                  {index + 1}
+                                </div>
+                                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                  Test Case {index + 1}
+                                </span>
+                              </div>
+                              <span className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded">
+                                {testCase.difficulty}
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded p-2">
+                                <div className="text-xs font-medium text-green-700 dark:text-green-300 mb-1">Input</div>
+                                <code className="text-xs font-mono text-green-800 dark:text-green-200 block whitespace-pre-wrap break-all">
+                                  {JSON.stringify(testCase.input, null, 2)}
+                                </code>
+                              </div>
+                              
+                              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded p-2">
+                                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">Expected Output</div>
+                                <code className="text-xs font-mono text-blue-800 dark:text-blue-200 block whitespace-pre-wrap break-all">
+                                  {JSON.stringify(testCase.expected, null, 2)}
+                                </code>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        
+                        {availableTestCases.length > 5 && (
+                          <div className="text-center mt-3">
+                            <Button
+                              onClick={() => setShowAllProblemCases(!showAllProblemCases)}
+                              variant="outline"
+                              size="sm"
+                              className="text-blue-600 border-blue-300 hover:bg-blue-50"
+                            >
+                              {showAllProblemCases ? (
+                                <>Show Less ({availableTestCases.length - 5} hidden)</>
+                              ) : (
+                                <>Show More ({availableTestCases.length - 5} more cases)</>
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <Button 
+                        onClick={() => testCode({ problem_id: problemId, solution_code: displayCode, language: selectedLanguage })}
+                        disabled={!displayCode || isTesting}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4"
+                      >
+                        {isTesting ? (
+                          <>
+                            <Activity className="w-4 h-4 mr-2 animate-spin" />
+                            Testing Code...
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="w-4 h-4 mr-2" />
+                            Test Code Against Problem Cases
+                          </>
+                        )}
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="text-center py-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
+                      <TestTube className="h-8 w-8 mx-auto mb-3 text-blue-500" />
+                      <p className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-1">No Problem Test Cases</p>
+                      <p className="text-xs text-blue-600 dark:text-blue-400">This problem doesn't have predefined test cases</p>
+                    </div>
+                  )}
+                  </div>
+                </div>
+
+                {/* AI Generated Test Cases Section */}
+                <div className="space-y-4">
+                  <div className="bg-white dark:bg-gray-900 rounded-lg border border-teal-200 dark:border-teal-800 p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
+                          <Sparkles className="w-4 h-4 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-teal-900 dark:text-teal-100">
+                            AI Generated Test Cases
+                          </h3>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        {allAITestCases.length > 0 && (
+                          <div className="bg-teal-50 dark:bg-teal-900/30 border border-teal-200 dark:border-teal-700 rounded-md px-3 py-1">
+                            <span className="text-sm font-medium text-teal-700 dark:text-teal-300">
+                              {allAITestCases.length} cases
+                            </span>
+                          </div>
+                        )}
+                        <Button
+                          onClick={handleGenerateTestCases}
+                          disabled={isGeneratingTestCases || !problem}
+                          size="sm"
+                          className="bg-teal-600 hover:bg-teal-700 text-white"
+                        >
+                          {isGeneratingTestCases ? (
+                            <>
+                              <Activity className="w-4 h-4 mr-2 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-4 h-4 mr-2" />
+                              Generate AI Test Cases
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                  {allAITestCases.length > 0 ? (
+                    <>
+                      <div className="space-y-4">
+                        {allAITestCases.slice(0, showAllAICases ? allAITestCases.length : 5).map((testCase, index) => (
+                          <div key={index} className="bg-white dark:bg-gray-800 border border-teal-100 dark:border-teal-800 rounded-lg p-3 hover:border-teal-300 dark:hover:border-teal-600 transition-colors">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-6 h-6 bg-teal-500 rounded text-white text-xs flex items-center justify-center font-medium">
+                                  {index + 1}
+                                </div>
+                                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                                  AI Test {index + 1}
+                                </span>
+                                {testCase.id && (
+                                  <span className="text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 px-2 py-1 rounded">
+                                    ✓ Saved
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/30 px-2 py-1 rounded">
+                                {testCase.difficulty_level || 'Medium'}
+                              </span>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                              <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded p-2">
+                                <div className="text-xs font-medium text-green-700 dark:text-green-300 mb-1">Input</div>
+                                <code className="text-xs font-mono text-green-800 dark:text-green-200 block whitespace-pre-wrap break-all">
+                                  {JSON.stringify(testCase.input_data, null, 2)}
+                                </code>
+                              </div>
+                              
+                              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded p-2">
+                                <div className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">Expected Output</div>
+                                <code className="text-xs font-mono text-blue-800 dark:text-blue-200 block whitespace-pre-wrap break-all">
+                                  {JSON.stringify(testCase.expected_output, null, 2)}
+                                </code>
+                              </div>
+                            </div>
+                            
+                            {testCase.explanation && (
+                              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded p-2">
+                                <div className="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1">Why this test case</div>
+                                <p className="text-xs text-amber-800 dark:text-amber-200 leading-relaxed">
+                                  {testCase.explanation}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        
+                        {allAITestCases.length > 5 && (
+                          <div className="text-center mt-3">
+                            <Button
+                              onClick={() => setShowAllAICases(!showAllAICases)}
+                              variant="outline"
+                              size="sm"
+                              className="text-teal-600 border-teal-300 hover:bg-teal-50"
+                            >
+                              {showAllAICases ? (
+                                <>Show Less ({allAITestCases.length - 5} hidden)</>
+                              ) : (
+                                <>Show More ({allAITestCases.length - 5} more cases)</>
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex space-x-3 mt-4">
+                        <Button
+                          onClick={() => handleTestWithSelected(allAITestCases)}
+                          disabled={!displayCode || isTesting}
+                          className="flex-1 bg-teal-600 hover:bg-teal-700 text-white"
+                        >
+                          {isTesting ? (
+                            <>
+                              <Activity className="w-4 h-4 mr-2 animate-spin" />
+                              Testing AI Cases...
+                            </>
+                          ) : (
+                            <>
+                              <TestTube className="w-4 h-4 mr-2" />
+                              Test All AI Cases
+                            </>
+                          )}
+                        </Button>
+                        
+                        {previewTestCases.length > 0 && (
+                          <Button
+                            onClick={() => handleSaveTestCases(previewTestCases, false)}
+                            disabled={isSavingTestCases}
+                            className="flex-1"
+                            variant="outline"
+                          >
+                            {isSavingTestCases ? (
+                              <>
+                                <Activity className="w-4 h-4 mr-2 animate-spin" />
+                                Saving...
+                              </>
+                            ) : (
+                              <>
+                                <Save className="w-4 h-4 mr-2" />
+                                Save New Cases ({previewTestCases.length})
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-8 bg-teal-50 dark:bg-teal-900/20 rounded-lg border border-teal-200 dark:border-teal-700">
+                      <Sparkles className="h-8 w-8 mx-auto mb-3 text-teal-500" />
+                      <p className="text-sm font-medium text-teal-800 dark:text-teal-200 mb-1">Generate Intelligent Test Cases</p>
+                      <p className="text-xs text-teal-600 dark:text-teal-400">AI will create edge cases and challenging scenarios</p>
+                    </div>
+                  )}
+                  </div>
+                </div>
+
+                {/* Test Results Section */}
+                {results && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between pb-2 border-b-2 border-green-100 dark:border-green-900">
+                      <h3 className="text-xl font-bold flex items-center space-x-3">
+                        <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
+                          <Target className="w-6 h-6 text-green-600 dark:text-green-400" />
+                        </div>
+                        <span className="text-green-900 dark:text-green-100">Test Results</span>
+                      </h3>
+                    </div>
+                    
+                    <div className="bg-white dark:bg-gray-800 border border-green-200 dark:border-green-800 rounded-xl p-6 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="text-lg font-semibold text-green-900 dark:text-green-100">Overall Performance</span>
+                        <Badge 
+                          variant={results.success_rate === 100 ? 'default' : 'secondary'}
+                          className={`px-4 py-2 text-lg font-bold ${
+                            results.success_rate === 100 
+                              ? 'bg-green-600 text-white' 
+                              : 'bg-yellow-500 text-white'
+                          }`}
+                        >
+                          {results.success_rate}% Success
+                        </Badge>
+                      </div>
+                      <div className="text-lg text-green-700 dark:text-green-300">
+                        <strong>{results.passed_tests}</strong> out of <strong>{results.total_tests}</strong> test cases passed
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </TabsContent>
             
             <TabsContent value="session" className="space-y-4">
@@ -954,6 +1536,103 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
                     ))}
                   </div>
                 </div>
+                
+                {/* NEW: Action buttons based on test results */}
+                <div className="space-y-3 pt-4 border-t">
+                  {/* Show Analyze & Fix button when tests fail */}
+                  {results.success_rate < 100 && (
+                    <Button
+                      onClick={handleAnalyzeAndFix}
+                      disabled={isAnalyzing}
+                      className="w-full"
+                      variant="destructive"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <Activity className="w-4 h-4 mr-2 animate-spin" />
+                          Analyzing & Fixing...
+                        </>
+                      ) : (
+                        <>
+                          <Settings className="w-4 h-4 mr-2" />
+                          Analyze & Fix Code
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  
+                  {/* Show Generate Tests button when all tests pass */}
+                  {results.success_rate === 100 && (
+                    <div className="space-y-2">
+                      <Button
+                        onClick={handleGenerateTestCases}
+                        disabled={isGeneratingTestCases}
+                        className="w-full"
+                        variant="outline"
+                      >
+                        {isGeneratingTestCases ? (
+                          <>
+                            <Activity className="w-4 h-4 mr-2 animate-spin" />
+                            Generating Tests...
+                          </>
+                        ) : (
+                          <>
+                            <TestTube className="w-4 h-4 mr-2" />
+                            Generate More Tests
+                          </>
+                        )}
+                      </Button>
+                      
+                      {/* Show Test with New Cases button after generation */}
+                      {(lastGenerated?.generated_count || 0) > 0 && (
+                        <Button
+                          onClick={handleTestWithNewCases}
+                          disabled={isTesting}
+                          className="w-full"
+                        >
+                          {isTesting ? (
+                            <>
+                              <Activity className="w-4 h-4 mr-2 animate-spin" />
+                              Testing with New Cases...
+                            </>
+                          ) : (
+                            <>
+                              <Target className="w-4 h-4 mr-2" />
+                              Test with New Cases
+                            </>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Show analysis result when available */}
+                  {analysisResult && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg dark:bg-green-900/20 dark:border-green-800">
+                      <div className="flex items-center mb-2">
+                        <Sparkles className="w-4 h-4 text-green-500 mr-2" />
+                        <span className="text-sm font-medium text-green-700 dark:text-green-300">
+                          Code Fixed (Confidence: {analysisResult.confidence}/10)
+                        </span>
+                      </div>
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        {analysisResult.changes_summary}
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Show generation success message */}
+                  {(lastGenerated?.generated_count || 0) > 0 && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg dark:bg-blue-900/20 dark:border-blue-800">
+                      <div className="flex items-center">
+                        <TestTube className="w-4 h-4 text-blue-500 mr-2" />
+                        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                          Generated {lastGenerated?.generated_count || 0} new test cases
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             
@@ -968,6 +1647,54 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
           </div>
         </CardContent>
       </Card>
+      
+      {/* Floating Action Button for Mobile */}
+      {(isStreaming || reasoning || code) && !showStreamingModal && (
+        <motion.div
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0, opacity: 0 }}
+          className="fixed bottom-6 right-6 z-40 md:hidden"
+        >
+          <Button
+            onClick={() => setShowStreamingModal(true)}
+            size="lg"
+            className="h-14 w-14 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-2xl border-2 border-white/20"
+          >
+            <Monitor className="w-6 h-6" />
+            {isStreaming && (
+              <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full animate-pulse border-2 border-white" />
+            )}
+          </Button>
+        </motion.div>
+      )}
+
+      {/* Streaming Modal */}
+      <StreamingModal
+        isOpen={showStreamingModal}
+        onClose={() => setShowStreamingModal(false)}
+        activeAgent={activeAgent}
+        agentOutputs={agentOutputs}
+        completedAgents={completedAgents}
+        reasoning={reasoning}
+        code={code}
+        status={status}
+        isStreaming={isStreaming}
+      />
+
+      {/* Test Case Preview Modal */}
+      <TestCasePreviewModal
+        isOpen={showPreviewModal}
+        onClose={() => {
+          setShowPreviewModal(false);
+          setPreviewTestCases([]);
+        }}
+        testCases={previewTestCases}
+        onSave={handleSaveTestCases}
+        onTestWithSelected={handleTestWithSelected}
+        isSaving={isSavingTestCases}
+        problemTitle={problem?.title}
+      />
     </div>
   );
 } 

@@ -14,12 +14,14 @@ import {
   Clock,
   Users,
   Sparkles,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
+import { useDashboardMetrics } from '@/hooks/useDashboardMetrics';
 
 const features = [
   {
@@ -48,14 +50,34 @@ const features = [
   }
 ];
 
-const stats = [
-  { value: "1,247", label: "Problems Solved", icon: CheckCircle },
-  { value: "94%", label: "Success Rate", icon: Target },
-  { value: "2.3s", label: "Avg Response Time", icon: Clock },
-  { value: "50K+", label: "AI Iterations", icon: Activity }
-];
-
 export default function LandingPage() {
+  const { metrics, loading: metricsLoading, error } = useDashboardMetrics();
+
+  // Dynamic stats from database
+  const stats = [
+    { 
+      value: metricsLoading ? "..." : (metrics?.solvedProblems || 0).toString(), 
+      label: "Problems Solved", 
+      icon: CheckCircle 
+    },
+    { 
+      value: metricsLoading ? "..." : `${Math.round((metrics?.averageSuccessRate || 0) * 100)}%`, 
+      label: "Success Rate", 
+      icon: Target 
+    },
+    { 
+      value: metricsLoading ? "..." : `${(metrics?.averageDifficultyScore || 0).toFixed(1)}`, 
+      label: "Avg Difficulty", 
+      icon: Clock 
+    },
+    { 
+      value: metricsLoading ? "..." : (metrics?.recentActivity?.totalSessions || 0) >= 1000 
+        ? `${Math.round((metrics?.recentActivity?.totalSessions || 0) / 1000)}K+` 
+        : (metrics?.recentActivity?.totalSessions || 0).toString(), 
+      label: "AI Sessions", 
+      icon: Activity 
+    }
+  ];
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Section */}
@@ -124,23 +146,39 @@ export default function LandingPage() {
       {/* Stats Section */}
       <section className="py-16 border-t border-border">
         <div className="container mx-auto px-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-            {stats.map((stat, index) => (
-              <motion.div
-                key={stat.label}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: index * 0.1 }}
-                className="text-center space-y-2"
-              >
-                <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-primary/10 text-primary mb-2">
-                  <stat.icon className="w-6 h-6" />
-                </div>
-                <div className="text-3xl font-bold">{stat.value}</div>
-                <div className="text-sm text-muted-foreground">{stat.label}</div>
-              </motion.div>
-            ))}
-          </div>
+          {error ? (
+            <div className="text-center text-muted-foreground">
+              <p>Unable to load statistics at the moment</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+              {stats.map((stat, index) => (
+                <motion.div
+                  key={stat.label}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: index * 0.1 }}
+                  className="text-center space-y-2"
+                >
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-primary/10 text-primary mb-2">
+                    {metricsLoading ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : (
+                      <stat.icon className="w-6 h-6" />
+                    )}
+                  </div>
+                  <div className="text-3xl font-bold">
+                    {metricsLoading ? (
+                      <div className="animate-pulse bg-muted h-8 w-16 mx-auto rounded"></div>
+                    ) : (
+                      stat.value
+                    )}
+                  </div>
+                  <div className="text-sm text-muted-foreground">{stat.label}</div>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

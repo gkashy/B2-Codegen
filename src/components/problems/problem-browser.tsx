@@ -5,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Search, Filter, SortAsc, Play, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Search, Filter, SortAsc, Play, CheckCircle, XCircle, Clock, Target, TrendingUp, TestTube } from 'lucide-react';
 import Link from 'next/link';
-import { useProblems } from '@/hooks/useQueries';
+import { useProblemsWithMetrics, getDifficultyInfo, getProblemStatus, getPerformanceDisplay } from '@/hooks/useProblemsWithMetrics';
 import { Problem } from '@/types/backend';
 
 export default function ProblemBrowser() {
@@ -17,17 +17,18 @@ export default function ProblemBrowser() {
   const [selectedStatus, setSelectedStatus] = useState('All');
   const [sortBy, setSortBy] = useState('id');
 
-  // Fetch problems from database
-  const { data: problems = [], isLoading, error } = useProblems({
+  // Fetch problems with metrics from database
+  const { data: problems = [], isLoading, error } = useProblemsWithMetrics({
     search: searchTerm,
-    difficulty: selectedDifficulty === 'All' ? undefined : [selectedDifficulty as any]
+    difficulty: selectedDifficulty === 'All' ? undefined : [selectedDifficulty]
   });
 
   // Debug logging
-  console.log('Problems query result:', { problems, isLoading, error });
+  console.log('Problems with metrics result:', { problems, isLoading, error });
 
-  // Use problems from database, or fallback if empty
-  const displayProblems = problems.length > 0 ? problems : [
+  // Only use fallback data when there's an error AND no search/filter is applied
+  const shouldUseFallback = error && !searchTerm && selectedDifficulty === 'All';
+  const displayProblems = shouldUseFallback && problems.length === 0 ? [
     {
       id: 1,
       question_id: 1,
@@ -88,15 +89,24 @@ export default function ProblemBrowser() {
       title_slug: 'longest-palindromic-substring',
       created_at: new Date().toISOString(),
     },
-  ];
+  ] : problems;
 
   const filteredProblems = useMemo(() => {
-    let filtered = displayProblems.filter(problem => {
-      const matchesSearch = problem.title.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesDifficulty = selectedDifficulty === 'All' || problem.difficulty === selectedDifficulty;
-      
-      return matchesSearch && matchesDifficulty;
-    });
+    let filtered = [...displayProblems];
+
+    // Only apply client-side search if not already filtered by database
+    if (searchTerm && shouldUseFallback) {
+      filtered = filtered.filter(problem => 
+        problem.title.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    // Only apply client-side difficulty filter if using fallback data
+    if (selectedDifficulty !== 'All' && shouldUseFallback) {
+      filtered = filtered.filter(problem => 
+        problem.difficulty.toLowerCase() === selectedDifficulty.toLowerCase()
+      );
+    }
 
     // Sort problems
     filtered.sort((a, b) => {
@@ -104,8 +114,8 @@ export default function ProblemBrowser() {
         case 'title':
           return a.title.localeCompare(b.title);
         case 'difficulty':
-          const difficultyOrder = { 'Easy': 1, 'Medium': 2, 'Hard': 3 };
-          return difficultyOrder[a.difficulty] - difficultyOrder[b.difficulty];
+          const difficultyOrder = { 'easy': 1, 'Easy': 1, 'medium': 2, 'Medium': 2, 'hard': 3, 'Hard': 3 };
+          return (difficultyOrder[a.difficulty] || 2) - (difficultyOrder[b.difficulty] || 2);
         case 'id':
         default:
           return a.id - b.id;
@@ -113,7 +123,7 @@ export default function ProblemBrowser() {
     });
 
     return filtered;
-  }, [displayProblems, searchTerm, selectedDifficulty, sortBy]);
+  }, [displayProblems, searchTerm, selectedDifficulty, sortBy, shouldUseFallback]);
 
   // Handle loading state
   if (isLoading) {
@@ -141,29 +151,7 @@ export default function ProblemBrowser() {
     );
   }
 
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case 'Easy':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-      case 'Medium':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-      case 'Hard':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-      default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'solved':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'attempted':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
-  };
+  // Removed old functions - now using dynamic difficulty and status system from hooks
 
   return (
     <div className="space-y-6">
@@ -204,54 +192,103 @@ export default function ProblemBrowser() {
       {/* Problem count */}
       <div className="text-sm text-muted-foreground">
         Showing {filteredProblems.length} problem{filteredProblems.length !== 1 ? 's' : ''}
-        {problems.length === 0 && ' (using fallback data)'}
+        {shouldUseFallback && ' (using fallback data)'}
       </div>
+
+      {/* Empty state */}
+      {filteredProblems.length === 0 && !shouldUseFallback && (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <p className="text-lg font-medium text-muted-foreground">No problems found</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              {searchTerm ? `No problems match "${searchTerm}"` : 
+               selectedDifficulty !== 'All' ? `No ${selectedDifficulty.toLowerCase()} problems available` :
+               'Try adjusting your search or filters'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Problems grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredProblems.map((problem) => (
-          <Card key={problem.id} className="hover:shadow-lg transition-shadow">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{problem.title}</CardTitle>
-                <Badge className={getDifficultyColor(problem.difficulty)}>
-                  {problem.difficulty}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div 
-                  className="text-sm text-muted-foreground line-clamp-2"
-                  dangerouslySetInnerHTML={{ __html: problem.content_html }}
-                />
-                
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">#{problem.id}</span>
-                </div>
-                
-                <div className="flex gap-2">
-                  <Button asChild size="sm" className="flex-1">
-                    <Link href={`/problems/${problem.id}`}>
-                      View Problem
-                    </Link>
-                  </Button>
-                  <Button asChild size="sm" variant="outline" className="flex-1">
-                    <Link href={`/problems/${problem.id}/solve`}>
-                      <Play className="h-4 w-4 mr-1" />
-                      Solve with AI
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {filteredProblems.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredProblems.map((problem) => {
+          const difficultyInfo = getDifficultyInfo(problem);
+          const status = getProblemStatus(problem);
+          const performance = getPerformanceDisplay(problem);
 
-      {filteredProblems.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">No problems found matching your criteria.</p>
+          return (
+            <Card key={problem.id} className="hover:shadow-lg transition-shadow">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-lg">{problem.title}</CardTitle>
+                    {status === 'solved' && <CheckCircle className="h-4 w-4 text-green-500" />}
+                    {status === 'attempted' && <Clock className="h-4 w-4 text-yellow-500" />}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge className={difficultyInfo.color}>
+                      {difficultyInfo.difficulty}
+                      {difficultyInfo.isDynamic && (
+                        <span className="ml-1 text-xs">({difficultyInfo.score?.toFixed(1)})</span>
+                      )}
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <div 
+                    className="text-sm text-muted-foreground line-clamp-2"
+                    dangerouslySetInnerHTML={{ __html: problem.content_html }}
+                  />
+                  
+                  {/* Dynamic Metrics Display */}
+                  {performance.hasData && (
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="text-center p-2 bg-muted/30 rounded">
+                        <div className="font-medium text-green-600">{performance.successRate}%</div>
+                        <div className="text-muted-foreground">Success Rate</div>
+                      </div>
+                      <div className="text-center p-2 bg-muted/30 rounded">
+                        <div className="font-medium text-blue-600">{performance.attempts}</div>
+                        <div className="text-muted-foreground">Attempts</div>
+                      </div>
+                      <div className="text-center p-2 bg-muted/30 rounded">
+                        <div className="font-medium text-purple-600">{performance.testCases}</div>
+                        <div className="text-muted-foreground">Test Cases</div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">#{problem.id}</span>
+                    {(performance.generatedTests || 0) > 0 && (
+                      <Badge variant="outline" className="text-xs">
+                        <TestTube className="h-3 w-3 mr-1" />
+                        +{performance.generatedTests} AI tests
+                      </Badge>
+                    )}
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <Button asChild size="sm" className="flex-1">
+                      <Link href={`/problems/${problem.id}`}>
+                        View Problem
+                      </Link>
+                    </Button>
+                    <Button asChild size="sm" variant="outline" className="flex-1">
+                      <Link href={`/problems/${problem.id}/solve`}>
+                        <Play className="h-4 w-4 mr-1" />
+                        Solve with AI
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+          })}
         </div>
       )}
     </div>

@@ -6,9 +6,24 @@ export interface Problem {
   difficulty: 'Easy' | 'Medium' | 'Hard'
   content_html: string
   code: string
-  test_cases: string
+  test_cases: string // Legacy field - may contain text format
   parameter_map: string
   title_slug: string
+  created_at: string
+  // New relational test cases
+  test_cases_data?: TestCaseData[]
+  test_cases_relation?: TestCaseData[]
+  legacy_test_cases?: any[]
+}
+
+export interface TestCaseData {
+  id: number
+  problem_id: number
+  input_data: any
+  expected_output: any
+  difficulty_level?: string
+  source?: string
+  is_active: boolean
   created_at: string
 }
 
