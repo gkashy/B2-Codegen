@@ -36,12 +36,19 @@ interface StreamingModalProps {
     planner: string;
     coder: string;
     reviewer: string;
+    explainer: string;
   };
   completedAgents: string[];
   reasoning: string;
   code: string;
   status: 'idle' | 'thinking' | 'coding' | 'complete';
   isStreaming: boolean;
+  results?: any;
+  displayCode?: string;
+  problem?: any;
+  selectedLanguage?: string;
+  iterativeAgentMode?: boolean;
+  callCodeExplainer?: (code: string, process?: string) => Promise<void>;
 }
 
 interface FormattedSection {
@@ -95,6 +102,17 @@ const agents = [
     iconColor: 'text-orange-600 dark:text-orange-400',
     description: 'Checking and optimizing the solution',
     emoji: '✅'
+  },
+  {
+    id: 'explainer',
+    name: 'Code Explainer',
+    icon: Sparkles,
+    color: 'from-purple-600 to-purple-700',
+    bgColor: 'bg-purple-50/80',
+    borderColor: 'border-purple-200/60',
+    iconColor: 'text-purple-600',
+    description: 'Educational analysis and quality assessment',
+    emoji: '🎓'
   }
 ];
 
@@ -211,12 +229,18 @@ const getAgentMessage = (agentType: string, output: string, isActive: boolean, i
         return "Time to write some clean, efficient code based on our plan...";
       case 'reviewer':
         return "Let me review this solution and make sure it's optimized and correct...";
+      case 'explainer':
+        return "Analyzing the solution for educational insights and quality assessment...";
       default:
         return "Working on this step...";
     }
   }
   
   if (isCompleted && output) {
+    if (agentType === 'explainer') {
+      // Special handling for explainer output (JSON format)
+      return output;
+    }
     const sections = formatAgentOutput(output, agentType);
     return sections.length > 0 ? sections : "✅ Analysis complete!";
   }
@@ -277,6 +301,177 @@ const renderListItem = (item: string, index: number) => {
   );
 };
 
+// Enhanced markdown parser for Code Explainer content
+const parseMarkdownContent = (content: string): React.ReactElement[] => {
+  if (!content) return [];
+  
+  const lines = content.split('\n');
+  const elements: React.ReactElement[] = [];
+  let inCodeBlock = false;
+  let codeContent: string[] = [];
+  let currentListItems: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+    
+    // Handle code blocks
+    if (trimmedLine.startsWith('```')) {
+      if (inCodeBlock) {
+        // End code block
+        if (codeContent.length > 0) {
+          elements.push(
+            <div key={`code-${i}`} className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm my-3 overflow-x-auto">
+              <pre>{codeContent.join('\n')}</pre>
+            </div>
+          );
+        }
+        codeContent = [];
+        inCodeBlock = false;
+      } else {
+        // Start code block
+        inCodeBlock = true;
+        // Flush any pending list items
+        if (currentListItems.length > 0) {
+          elements.push(
+            <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+              {currentListItems.map((item, idx) => (
+                <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+              ))}
+            </ul>
+          );
+          currentListItems = [];
+        }
+      }
+      continue;
+    }
+    
+    // If in code block, collect content
+    if (inCodeBlock) {
+      codeContent.push(line);
+      continue;
+    }
+    
+    // Handle headers
+    if (trimmedLine.startsWith('####')) {
+      // Flush any pending list items
+      if (currentListItems.length > 0) {
+        elements.push(
+          <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+            {currentListItems.map((item, idx) => (
+              <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+            ))}
+          </ul>
+        );
+        currentListItems = [];
+      }
+      
+      const headerText = trimmedLine.replace(/^####\s*/, '');
+      elements.push(
+        <h4 key={i} className="text-lg font-bold text-blue-900 mt-6 mb-3 border-b border-blue-200 pb-1">
+          {parseInlineMarkdown(headerText)}
+        </h4>
+      );
+    } else if (trimmedLine.startsWith('###')) {
+      // Flush any pending list items
+      if (currentListItems.length > 0) {
+        elements.push(
+          <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+            {currentListItems.map((item, idx) => (
+              <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+            ))}
+          </ul>
+        );
+        currentListItems = [];
+      }
+      
+      const headerText = trimmedLine.replace(/^###\s*/, '');
+      elements.push(
+        <h3 key={i} className="text-xl font-bold text-blue-900 mt-6 mb-4 border-b-2 border-blue-300 pb-2">
+          {parseInlineMarkdown(headerText)}
+        </h3>
+      );
+    }
+    // Handle list items
+    else if (trimmedLine.match(/^[-*]\s+/) || trimmedLine.match(/^\d+\.\s+/)) {
+      const listItemText = trimmedLine.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, '');
+      currentListItems.push(listItemText);
+    }
+    // Handle regular paragraphs
+    else if (trimmedLine) {
+      // Flush any pending list items first
+      if (currentListItems.length > 0) {
+        elements.push(
+          <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+            {currentListItems.map((item, idx) => (
+              <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+            ))}
+          </ul>
+        );
+        currentListItems = [];
+      }
+      
+      elements.push(
+        <p key={i} className="text-blue-800 mb-3 leading-relaxed">
+          {parseInlineMarkdown(trimmedLine)}
+        </p>
+      );
+    }
+    // Handle empty lines (spacing)
+    else if (!trimmedLine && elements.length > 0) {
+      // Add spacing between sections
+      elements.push(<div key={`space-${i}`} className="mb-2"></div>);
+    }
+  }
+  
+  // Flush any remaining list items
+  if (currentListItems.length > 0) {
+    elements.push(
+      <ul key="final-list" className="list-disc ml-6 space-y-1 my-3">
+        {currentListItems.map((item, idx) => (
+          <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+        ))}
+      </ul>
+    );
+  }
+  
+  return elements;
+};
+
+// Parse inline markdown (bold, inline code, etc.)
+const parseInlineMarkdown = (text: string): React.ReactNode => {
+  if (!text) return text;
+  
+  // Handle bold text (**text**)
+  const boldRegex = /(\*\*.*?\*\*)/g;
+  const parts = text.split(boldRegex);
+  
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={index} className="font-bold text-blue-900">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    
+    // Handle inline code (`code`)
+    const codeRegex = /(`[^`]+`)/g;
+    const codeParts = part.split(codeRegex);
+    
+    return codeParts.map((codePart, codeIndex) => {
+      if (codePart.startsWith('`') && codePart.endsWith('`')) {
+        return (
+          <code key={`${index}-${codeIndex}`} className="bg-gray-200 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">
+            {codePart.slice(1, -1)}
+          </code>
+        );
+      }
+      return codePart;
+    });
+  });
+};
+
 export default function StreamingModal({
   isOpen,
   onClose,
@@ -286,12 +481,19 @@ export default function StreamingModal({
   reasoning,
   code,
   status,
-  isStreaming
+  isStreaming,
+  results,
+  displayCode,
+  problem,
+  selectedLanguage,
+  iterativeAgentMode,
+  callCodeExplainer
 }: StreamingModalProps) {
   const [isMinimized, setIsMinimized] = useState(false);
   const [selectedTab, setSelectedTab] = useState<string | null>(null);
   const [currentOutput, setCurrentOutput] = useState<string | FormattedSection[]>('');
   const [currentAgentMessage, setCurrentAgentMessage] = useState('');
+  const [isExplaining, setIsExplaining] = useState(false);
 
   // Auto-select the active agent or keep the selected tab
   useEffect(() => {
@@ -325,6 +527,25 @@ export default function StreamingModal({
     }
   }, [selectedTab, agentOutputs, completedAgents, activeAgent, reasoning]);
 
+  // Call code explainer when manual testing completes with 100% success
+  useEffect(() => {
+    console.log('🔍 StreamingModal - Code Explainer useEffect triggered:', {
+      results: results?.success_rate,
+      hasDisplayCode: !!displayCode,
+      iterativeAgentMode,
+      isExplaining,
+      hasCallCodeExplainer: !!callCodeExplainer,
+      shouldTrigger: results && results.success_rate === 100 && displayCode && !iterativeAgentMode && !isExplaining && callCodeExplainer
+    });
+    
+    if (results && results.success_rate === 100 && displayCode && !iterativeAgentMode && !isExplaining && callCodeExplainer) {
+      console.log('🎓 StreamingModal - Manual test completed with 100% success - calling code explainer');
+      setIsExplaining(true);
+      callCodeExplainer(displayCode, 'Manual AI code generation and testing')
+        .finally(() => setIsExplaining(false));
+    }
+  }, [results, displayCode, iterativeAgentMode, isExplaining, callCodeExplainer]);
+
   if (!isOpen) return null;
 
   const progress = (completedAgents.length / agents.length) * 100;
@@ -349,12 +570,12 @@ export default function StreamingModal({
           }}
           exit={{ scale: 0.95, opacity: 0 }}
           transition={{ type: "spring", duration: 0.5 }}
-          className={`bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border border-white/20 dark:border-gray-700/50 rounded-2xl shadow-2xl overflow-hidden ${
+          className={`bg-white border-2 border-gray-300 shadow-2xl rounded-2xl overflow-hidden ${
             isMinimized ? 'w-72 h-44' : 'w-full max-w-7xl h-[85vh]'
           }`}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-white/10 dark:border-gray-700/50 bg-gradient-to-r from-blue-50/50 to-purple-50/50 dark:from-blue-950/30 dark:to-purple-950/30 flex-shrink-0">
+          <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gray-50/30 flex-shrink-0">
             <div className="flex items-center space-x-4">
               <div className="relative">
                 <div className="p-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg">
@@ -365,8 +586,8 @@ export default function StreamingModal({
                 )}
               </div>
               <div>
-                <h2 className="font-bold text-xl text-gray-900 dark:text-white">AI Problem Solving</h2>
-                <p className="text-gray-600 dark:text-gray-300">
+                <h2 className="font-bold text-xl text-gray-900">AI Problem Solving</h2>
+                <p className="text-gray-600">
                   {currentAgent ? (
                     <span className="flex items-center gap-2">
                       <span className="text-lg">{currentAgent.emoji}</span>
@@ -381,7 +602,7 @@ export default function StreamingModal({
             
             <div className="flex items-center space-x-3">
               {isStreaming && (
-                <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                <div className="flex items-center space-x-2 px-3 py-1 rounded-full bg-green-100 text-green-700">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                   <span className="text-sm font-medium">Live</span>
                 </div>
@@ -390,7 +611,7 @@ export default function StreamingModal({
                 variant="ghost" 
                 size="sm"
                 onClick={() => setIsMinimized(!isMinimized)}
-                className="text-gray-600 dark:text-gray-300 hover:bg-white/20"
+                className="text-gray-600 hover:bg-gray-200"
               >
                 {isMinimized ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
               </Button>
@@ -398,7 +619,7 @@ export default function StreamingModal({
                 variant="ghost" 
                 size="sm" 
                 onClick={onClose}
-                className="text-gray-600 dark:text-gray-300 hover:bg-white/20"
+                className="text-gray-600 hover:bg-gray-200"
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -407,149 +628,146 @@ export default function StreamingModal({
 
           {!isMinimized && (
             <div className="flex flex-col h-full min-h-0">
-              {/* Agent Tabs */}
-              <div className="flex-shrink-0 border-b border-white/10 dark:border-gray-700/50 bg-gray-50/30 dark:bg-gray-800/30 p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                      {Math.round(progress)}%
-                    </div>
-                    <div className="text-sm text-gray-600 dark:text-gray-300">
-                      {completedAgents.length}/{agents.length} agents completed
-                    </div>
+              {/* Progress Bar */}
+              <div className="flex-shrink-0 border-b border-gray-200 bg-gray-50/30 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium text-gray-700">
+                    Agent Progress: {Math.round(progress)}% Complete
                   </div>
-                  <div className="flex-1 mx-6">
-                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                      <motion.div
-                        className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full shadow-lg"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${progress}%` }}
-                        transition={{ duration: 0.8, ease: "easeOut" }}
-                      />
-                    </div>
+                  <div className="text-sm text-gray-600">
+                    {completedAgents.length}/{agents.length} agents completed
                   </div>
                 </div>
-
-                {/* Tab Navigation */}
-                <div className="flex space-x-2">
-                  {agents.map((agent) => {
-                    const isActive = activeAgent === agent.id;
-                    const isCompleted = completedAgents.includes(agent.id);
-                    const isSelected = selectedTab === agent.id;
-                    // Allow clicking on completed tabs always, active tab always, and tabs with content
-                    const hasContent = agentOutputs[agent.id] && agentOutputs[agent.id].trim().length > 0;
-                    const isClickable = isCompleted || isActive || hasContent;
-
-                    return (
-                      <button
-                        key={agent.id}
-                        onClick={() => isClickable && setSelectedTab(agent.id)}
-                        disabled={!isClickable}
-                        className={`flex items-center space-x-2 px-4 py-3 rounded-lg border transition-all duration-300 ${
-                          isSelected
-                            ? `${agent.bgColor} ${agent.borderColor} shadow-lg ring-2 ring-blue-300/50`
-                            : isClickable
-                            ? 'bg-white/50 dark:bg-gray-800/50 border-gray-200/50 dark:border-gray-700/50 hover:bg-white/70 dark:hover:bg-gray-800/70 hover:shadow-md cursor-pointer'
-                            : 'bg-gray-100/50 dark:bg-gray-900/50 border-gray-200/30 dark:border-gray-800/30 opacity-40 cursor-not-allowed'
-                        }`}
-                      >
-                        <div className={`p-2 rounded-lg ${
-                          isSelected 
-                            ? `bg-gradient-to-r ${agent.color} text-white shadow-md`
-                            : isClickable
-                            ? `${agent.bgColor} ${agent.iconColor}`
-                            : 'bg-gray-200 dark:bg-gray-800 text-gray-400'
-                        }`}>
-                          <agent.icon className="w-4 h-4" />
-                        </div>
-                        
-                        <div className="flex-1 text-left min-w-0">
-                          <div className="flex items-center space-x-2">
-                            <span className="text-sm">{agent.emoji}</span>
-                            <h3 className={`font-medium text-sm truncate ${
-                              isSelected ? 'text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'
-                            }`}>
-                              {agent.name}
-                            </h3>
-                            {isActive && <Activity className="w-3 h-3 animate-spin text-green-500 flex-shrink-0" />}
-                            {isCompleted && !isActive && <CheckCircle className="w-3 h-3 text-blue-500 flex-shrink-0" />}
-                            {!isCompleted && !isActive && hasContent && <Clock className="w-3 h-3 text-yellow-500 flex-shrink-0" />}
-                            {!isClickable && <Circle className="w-3 h-3 text-gray-400 flex-shrink-0" />}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <motion.div
+                    className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full shadow-lg"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progress}%` }}
+                    transition={{ duration: 0.8, ease: "easeOut" }}
+                  />
                 </div>
               </div>
 
-              {/* Content Area */}
-              <div className="flex-1 flex flex-col min-h-0">
-                {/* Content Header */}
-                <div className="flex-shrink-0 p-6 border-b border-white/10 dark:border-gray-700/50 bg-gradient-to-r from-gray-50/50 to-white/50 dark:from-gray-800/30 dark:to-gray-900/30">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      {selectedTab ? (
-                        <>
-                          <div className={`p-2 rounded-lg ${
-                            agents.find(a => a.id === selectedTab)?.id === activeAgent
-                              ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white'
-                              : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                          }`}>
-                            {agents.find(a => a.id === selectedTab)?.icon && 
-                              React.createElement(agents.find(a => a.id === selectedTab)!.icon, { className: "w-5 h-5" })
-                            }
+              {/* Two Panel Layout */}
+              <div className="flex flex-1 overflow-hidden">
+                {/* Left Panel: Agent Timeline */}
+                <div className="w-1/4 border-r border-gray-200 p-4 overflow-y-auto bg-gray-50">
+                  <div className="space-y-3">
+                    <div className="text-sm font-medium text-gray-700 mb-4">Agent Timeline</div>
+                    
+                    {agents.map((agent) => {
+                      const isActive = activeAgent === agent.id;
+                      const isCompleted = completedAgents.includes(agent.id);
+                      const isSelected = selectedTab === agent.id;
+                      const hasContent = agentOutputs[agent.id as keyof typeof agentOutputs] && agentOutputs[agent.id as keyof typeof agentOutputs].trim().length > 0;
+                      const isClickable = isCompleted || isActive || hasContent;
+
+                      return (
+                        <div
+                          key={agent.id}
+                          onClick={() => isClickable && setSelectedTab(agent.id)}
+                          className={`p-3 rounded-lg border transition-all duration-200 cursor-pointer ${
+                            isSelected
+                              ? 'border-blue-300 bg-blue-50 shadow-sm'
+                              : isClickable
+                              ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                              : 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className={`p-1.5 rounded-lg ${
+                              isSelected 
+                                ? `bg-gradient-to-r ${agent.color} text-white shadow-sm`
+                                : isClickable
+                                ? `${agent.bgColor} ${agent.iconColor}`
+                                : 'bg-gray-200 text-gray-400'
+                            }`}>
+                              <agent.icon className="w-3 h-3" />
+                            </div>
+                            
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm text-gray-900 truncate flex items-center gap-1">
+                                <span className="text-xs">{agent.emoji}</span>
+                                <span>{agent.name}</span>
+                              </div>
+                            </div>
+
+                            <div className="flex-shrink-0">
+                              {((isActive && isStreaming) || (agent.id === 'explainer' && isExplaining)) && <Activity className="w-3 h-3 animate-spin text-green-500" />}
+                              {isCompleted && !isActive && !(agent.id === 'explainer' && isExplaining) && <CheckCircle className="w-3 h-3 text-blue-500" />}
+                              {!isCompleted && !isActive && hasContent && !(agent.id === 'explainer' && isExplaining) && <Clock className="w-3 h-3 text-yellow-500" />}
+                              {!isClickable && !(agent.id === 'explainer' && isExplaining) && <Circle className="w-3 h-3 text-gray-400" />}
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="font-semibold text-gray-900 dark:text-white text-lg flex items-center space-x-2">
-                              <span>{agents.find(a => a.id === selectedTab)?.emoji}</span>
-                              <span>{agents.find(a => a.id === selectedTab)?.name}</span>
-                              {selectedTab === activeAgent && isStreaming && (
-                                <Activity className="w-4 h-4 animate-spin text-blue-500" />
-                              )}
-                            </h3>
-                            <p className="text-sm text-gray-600 dark:text-gray-400">
-                              {selectedTab === activeAgent && isStreaming 
-                                ? 'Currently working...' 
-                                : completedAgents.includes(selectedTab)
-                                ? 'Analysis complete'
-                                : 'Waiting to start...'}
-                            </p>
+
+                          <div className="text-xs text-gray-600">
+                            {(isActive && isStreaming) || (agent.id === 'explainer' && isExplaining) ? 'Working...' : 
+                             isCompleted ? 'Complete' :
+                             hasContent ? 'In Progress' : 'Waiting'}
                           </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="p-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 text-white">
-                            <MessageSquare className="w-5 h-5" />
+
+                          {/* Status indicator bar */}
+                          <div className="mt-2 h-1 bg-gray-200 rounded-full overflow-hidden">
+                            <div className={`h-1 rounded-full transition-all duration-300 ${
+                              isCompleted 
+                                ? 'bg-blue-500 w-full' 
+                                : (isActive && isStreaming) || (agent.id === 'explainer' && isExplaining)
+                                ? 'bg-green-500 w-3/4 animate-pulse'
+                                : hasContent
+                                ? 'bg-yellow-500 w-1/2'
+                                : 'bg-gray-300 w-0'
+                            }`} />
                           </div>
-                          <div>
-                            <h3 className="font-semibold text-gray-900 dark:text-white text-lg">
-                              AI Assistant
-                            </h3>
-                            <p className="text-sm text-gray-600 dark:text-gray-400">
-                              Ready to help
-                            </p>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    {selectedTab === activeAgent && isStreaming && (
-                      <div className="flex items-center space-x-2">
-                        <Sparkles className="w-4 h-4 text-purple-500 animate-pulse" />
-                        <span className="text-sm font-medium text-purple-600 dark:text-purple-400">Live</span>
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Streaming Content */}  
-                <div className="flex-1 flex flex-col min-h-0">
-                  <div className="flex-1 overflow-y-auto">
-                    <div className="p-6 pb-16">
+                {/* Right Panel: Selected Agent Content */}
+                <div className="flex-1 p-6 overflow-y-auto bg-white">
+                  {selectedTab ? (
+                    <div className="space-y-4">
+                      {/* Agent Header */}
+                      <div className="flex items-center gap-3 pb-3 border-b border-gray-200">
+                        <div className={`p-2 rounded-lg ${
+                          agents.find(a => a.id === selectedTab)?.id === activeAgent
+                            ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white'
+                            : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                        }`}>
+                          {agents.find(a => a.id === selectedTab)?.icon && 
+                            React.createElement(agents.find(a => a.id === selectedTab)!.icon, { className: "w-5 h-5" })
+                          }
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-gray-900 text-lg flex items-center space-x-2">
+                            <span>{agents.find(a => a.id === selectedTab)?.emoji}</span>
+                            <span>{agents.find(a => a.id === selectedTab)?.name}</span>
+                            {selectedTab === activeAgent && isStreaming && (
+                              <Activity className="w-4 h-4 animate-spin text-blue-500" />
+                            )}
+                          </h3>
+                          <p className="text-sm text-gray-600">
+                            {selectedTab === activeAgent && isStreaming 
+                              ? 'Currently working...' 
+                              : completedAgents.includes(selectedTab)
+                              ? 'Analysis complete'
+                              : 'Waiting to start...'}
+                          </p>
+                        </div>
+                        {selectedTab === activeAgent && isStreaming && (
+                          <div className="ml-auto flex items-center space-x-2">
+                            <Sparkles className="w-4 h-4 text-purple-500 animate-pulse" />
+                            <span className="text-sm font-medium text-purple-600">Live</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Agent Content */}
                       <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="space-y-6"
+                        className="space-y-4"
                       >
                         {currentAgentMessage || currentOutput ? (
                           <div className="space-y-4">
@@ -580,8 +798,96 @@ export default function StreamingModal({
                               </motion.div>
                             )}
 
-                            {/* Detailed Output */}
-                            {currentOutput && (
+                            {/* Special handling for Code Explainer */}
+                            {selectedTab === 'explainer' && currentOutput && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="space-y-4"
+                              >
+                                {(() => {
+                                  try {
+                                    const explainerData = JSON.parse(currentOutput as string)
+                                    const rubric = explainerData.rubric_evaluation || {}
+                                    
+                                    return (
+                                      <>
+                                        {/* Explanation */}
+                                        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                                          <h4 className="font-bold text-blue-900 mb-2">📚 Code Explanation</h4>
+                                          <div className="text-sm leading-relaxed">
+                                            {explainerData.explanation ? 
+                                              parseMarkdownContent(explainerData.explanation) : 
+                                              <p className="text-blue-800">No explanation available</p>
+                                            }
+                                          </div>
+                                        </div>
+
+                                        {/* Rubric Evaluation */}
+                                        {rubric && (
+                                          <div className="bg-gray-50 p-4 rounded-lg border">
+                                            <div className="flex items-center justify-between mb-3">
+                                              <h4 className="font-bold text-gray-900">📊 Code Quality Assessment</h4>
+                                              <div className="px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
+                                                Grade: {rubric.grade || 'N/A'}
+                                              </div>
+                                            </div>
+                                            
+                                            {/* Scores Grid */}
+                                            <div className="grid grid-cols-3 md:grid-cols-5 gap-3 mb-3">
+                                              <div className="text-center p-2 bg-white rounded border">
+                                                <div className="font-bold text-lg text-green-600">{rubric.correctness_score || 0}/5</div>
+                                                <div className="text-xs text-gray-600">Correctness</div>
+                                              </div>
+                                              <div className="text-center p-2 bg-white rounded border">
+                                                <div className="font-bold text-lg text-blue-600">{rubric.efficiency_score || 0}/5</div>
+                                                <div className="text-xs text-gray-600">Efficiency</div>
+                                              </div>
+                                              <div className="text-center p-2 bg-white rounded border">
+                                                <div className="font-bold text-lg text-purple-600">{rubric.structure_score || 0}/5</div>
+                                                <div className="text-xs text-gray-600">Structure</div>
+                                              </div>
+                                              <div className="text-center p-2 bg-white rounded border">
+                                                <div className="font-bold text-lg text-orange-600">{rubric.readability_score || 0}/5</div>
+                                                <div className="text-xs text-gray-600">Readability</div>
+                                              </div>
+                                              <div className="text-center p-2 bg-white rounded border">
+                                                <div className="font-bold text-lg text-indigo-600">{rubric.robustness_score || 0}/5</div>
+                                                <div className="text-xs text-gray-600">Robustness</div>
+                                              </div>
+                                            </div>
+
+                                            {/* Overall Score */}
+                                            <div className="text-center p-3 bg-gradient-to-r from-purple-100 to-blue-100 rounded border border-purple-200">
+                                              <div className="font-bold text-xl text-purple-700">
+                                                Overall: {rubric.overall_score || 0}/5
+                                              </div>
+                                              <div className="text-sm text-purple-600">
+                                                {rubric.summary || 'Assessment completed'}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </>
+                                    )
+                                  } catch (e) {
+                                    // Fallback for parsing errors - still try to format as markdown
+                                    const content = typeof currentOutput === 'string' ? currentOutput : JSON.stringify(currentOutput, null, 2);
+                                    return (
+                                      <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                                        <h4 className="font-bold text-purple-900 mb-2">🎓 Educational Analysis</h4>
+                                        <div className="text-sm">
+                                          {parseMarkdownContent(content)}
+                                        </div>
+                                      </div>
+                                    )
+                                  }
+                                })()}
+                              </motion.div>
+                            )}
+
+                            {/* Detailed Output for other agents */}
+                            {currentOutput && selectedTab !== 'explainer' && (
                               <motion.div
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -780,13 +1086,13 @@ export default function StreamingModal({
                                   <div>
                                     {completedAgents.length > 0 ? (
                                       <>
-                                        <p className="text-xl font-medium text-gray-700 dark:text-gray-300">Select an agent to view their analysis</p>
-                                        <p className="text-gray-600 dark:text-gray-400">Click on the completed agent tabs above to see their detailed work</p>
+                                        <p className="text-xl font-medium text-gray-700">Select an agent to view their analysis</p>
+                                        <p className="text-gray-600">Click on any agent card in the left panel to see their detailed work</p>
                                       </>
                                     ) : (
                                       <>
-                                        <p className="text-xl font-medium text-gray-700 dark:text-gray-300">Ready to solve!</p>
-                                        <p className="text-gray-600 dark:text-gray-400">Our AI agents will work together to analyze and solve your problem</p>
+                                        <p className="text-xl font-medium text-gray-700">Ready to solve!</p>
+                                        <p className="text-gray-600">Our AI agents will work together to analyze and solve your problem</p>
                                       </>
                                     )}
                                   </div>
@@ -797,10 +1103,28 @@ export default function StreamingModal({
                         )}
                       </motion.div>
                     </div>
-                  </div>
+                  ) : (
+                    /* Empty state when no tab selected */
+                    <div className="flex items-center justify-center h-full text-gray-500">
+                      <div className="text-center space-y-4">
+                        <div className="text-6xl">🤖</div>
+                        <div>
+                          {completedAgents.length > 0 ? (
+                            <>
+                              <p className="text-xl font-medium text-gray-700">Select an agent to view their analysis</p>
+                              <p className="text-gray-600">Click on any agent card to see their detailed work</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-xl font-medium text-gray-700">Ready to solve!</p>
+                              <p className="text-gray-600">Our AI agents will work together to analyze and solve your problem</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-
-
               </div>
             </div>
           )}
@@ -811,15 +1135,15 @@ export default function StreamingModal({
               <div className="space-y-2">
                 <div className="flex items-center justify-center space-x-2">
                   <div className="text-lg">🤖</div>
-                  <div className="text-sm font-medium text-gray-900 dark:text-white">AI Working...</div>
+                  <div className="text-sm font-medium text-gray-900">AI Working...</div>
                 </div>
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div className="w-full bg-gray-200 rounded-full h-2">
                   <motion.div
                     className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full"
                     animate={{ width: `${progress}%` }}
                   />
                 </div>
-                <div className="text-xs text-gray-600 dark:text-gray-400">
+                <div className="text-xs text-gray-600">
                   {selectedTab ? (
                     <span>{agents.find(a => a.id === selectedTab)?.emoji} {agents.find(a => a.id === selectedTab)?.name}</span>
                   ) : (

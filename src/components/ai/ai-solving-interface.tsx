@@ -44,6 +44,7 @@ import { useTestCaseGeneration } from '@/hooks/useTestCaseGeneration';
 import { Problem } from '@/types/backend';
 import StreamingModal from './streaming-modal';
 import { TestCasePreviewModal } from './test-case-preview-modal';
+import { AgentCollaborationModal } from './agent-collaboration-modal';
 
 interface AISolvingInterfaceProps {
   problemId: number;
@@ -55,7 +56,20 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
   const [maxAttempts] = useState(3);
   const [displayCode, setDisplayCode] = useState('');
   const [autoMode, setAutoMode] = useState(false);  // NEW: Toggle for auto-mode
+  const [iterativeAgentMode, setIterativeAgentMode] = useState(true);  // NEW: Iterative Agent Collaboration Mode (default enabled)
   const [showFixButton, setShowFixButton] = useState(false);  // NEW: Show fix button when tests fail
+  
+  // NEW: Iterative Agent States
+  const [isIterativeProcessing, setIsIterativeProcessing] = useState(false);
+  const [iterativeResults, setIterativeResults] = useState<any>(null);
+  const [showAgentModal, setShowAgentModal] = useState(false);
+  const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
+  const [currentPhase, setCurrentPhase] = useState<'analysis' | 'planning' | 'implementation' | 'complete'>('analysis');
+  const [currentSuccessRate, setCurrentSuccessRate] = useState(0);
+  
+  // NEW: Code Explainer states
+  const [explanationData, setExplanationData] = useState<any>(null);
+  const [isExplaining, setIsExplaining] = useState(false);
 
   // Helper function to get ONLY original/problem test cases (exclude AI generated)
   const getAvailableTestCases = () => {
@@ -110,11 +124,13 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     planner: string;
     coder: string;
     reviewer: string;
+    explainer: string;
   }>({
     analyzer: '',
     planner: '',
     coder: '',
-    reviewer: ''
+    reviewer: '',
+    explainer: ''
   });
   const [completedAgents, setCompletedAgents] = useState<string[]>([]);
   const [showStreamingModal, setShowStreamingModal] = useState(false);
@@ -195,6 +211,11 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
   const handleStartAI = async () => {
     if (!problem) return;
     
+    // NEW: Handle Iterative Agent Mode
+    if (iterativeAgentMode) {
+      return handleStartIterativeAgents();
+    }
+    
     resetStreaming();
     setCurrentAttempt(1);
     setShowFixButton(false);  // Reset fix button
@@ -205,7 +226,8 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       analyzer: '',
       planner: '',
       coder: '',
-      reviewer: ''
+      reviewer: '',
+      explainer: ''
     });
     setCompletedAgents([]);
     
@@ -220,6 +242,460 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     });
   };
 
+  // NEW: Browser Orchestrated Iterative Agent Collaboration
+  const handleStartIterativeAgents = async () => {
+    if (!problem || isIterativeProcessing) return;
+    
+    // Reset states
+    setIsIterativeProcessing(true);
+    setIterativeResults(null);
+    setAgentInteractions([]);
+    setCurrentPhase('analysis');
+    setCurrentSuccessRate(0);
+    setShowAgentModal(true);
+    
+    try {
+      // Step 1: Get orchestration data from code-generator
+      console.log('🚀 Getting orchestration data...');
+      const orchestrationResponse = await fetch('https://mbuiluhrtlgyawlqchaq.supabase.co/functions/v1/code-generator', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          problem_id: problemId,
+          language: selectedLanguage,
+          use_iterative_agents: true,
+          max_iterations: 10
+        })
+      });
+
+      if (!orchestrationResponse.ok) {
+        throw new Error(`Orchestration failed: ${orchestrationResponse.status}`);
+      }
+
+      const orchestrationData = await orchestrationResponse.json();
+      
+      if (orchestrationData.mode !== 'browser_orchestrated') {
+        throw new Error('Expected browser orchestrated mode');
+      }
+
+      const { agent_endpoints, prompts, problem_data, max_iterations } = orchestrationData;
+
+      // Step 2: Start the agent collaboration process
+      await runBrowserOrchestratedAgents(agent_endpoints, prompts, problem_data, max_iterations);
+
+    } catch (error) {
+      console.error('Browser orchestrated agent process failed:', error);
+      alert(`Agent process failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsIterativeProcessing(false);
+    }
+  };
+
+  // Helper function to add interaction and update UI
+  const addAgentInteraction = (agent: string, action: string, content: string) => {
+    const interaction = {
+      agent,
+      action,
+      content,
+      timestamp: new Date().toISOString()
+    };
+    setAgentInteractions(prev => [...prev, interaction]);
+    console.log(`${agent.toUpperCase()}: ${action}`, content.substring(0, 100) + '...');
+  };
+
+  // NEW: Call code explainer after successful execution
+  const callCodeExplainer = async (finalCode: string, solutionProcess?: string) => {
+    if (!problem || !finalCode.trim()) return;
+    
+    try {
+      setIsExplaining(true);
+      console.log('🎓 Calling Code Explainer for pedagogical assessment...');
+      
+      // Reset explainer output
+      setAgentOutputs(prev => ({ ...prev, explainer: '' }));
+      
+      const response = await fetch('https://mbuiluhrtlgyawlqchaq.supabase.co/functions/v1/code-explainer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          problem_data: {
+            title: problem.title,
+            description: problem.content_html || problem.title,
+            id: problem.id
+          },
+          final_code: finalCode,
+          solution_process: solutionProcess || 'Code generated through AI agent collaboration',
+          language: selectedLanguage,
+          stream: false // Use non-streaming for now
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Code Explainer failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Code Explainer completed:', result);
+      
+      // For iterative mode - add to agent interactions
+      if (iterativeAgentMode) {
+        addAgentInteraction('explainer', 'educational_analysis', 
+          JSON.stringify({
+            explanation: result.explanation,
+            rubric: result.rubric_evaluation,
+            type: 'pedagogical_assessment'
+          })
+        );
+      } else {
+        // For manual mode - update agent outputs and mark as completed
+        console.log('🔧 Manual mode: Updating explainer state with result:', result);
+        setAgentOutputs(prev => {
+          const newOutputs = {
+            ...prev,
+            explainer: JSON.stringify(result)
+          };
+          console.log('🔧 Setting agentOutputs:', newOutputs);
+          return newOutputs;
+        });
+        setCompletedAgents(prev => {
+          const newCompleted = [...prev.filter(a => a !== 'explainer'), 'explainer'];
+          console.log('🔧 Setting completedAgents:', newCompleted);
+          return newCompleted;
+        });
+        setActiveAgent(null);
+        console.log('🔧 Explainer should now be completed in UI');
+      }
+      
+      setExplanationData(result);
+
+    } catch (error) {
+      console.error('Code Explainer error:', error);
+      // Don't show error to user, just log it
+    } finally {
+      setIsExplaining(false);
+    }
+  };
+
+  // Helper function to call individual agents
+  const callAgent = async (endpoint: string, prompt: string, problemTitle: string, additionalData = {}) => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        problem_title: problemTitle,
+        ...additionalData
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Agent call failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result.result;
+  };
+
+  // Main orchestration function - SIMPLIFIED FLOW
+  const runBrowserOrchestratedAgents = async (endpoints: any, prompts: any, problemData: any, maxIterations: number) => {
+    try {
+      // STEP 1: ANALYZER (once)
+      setCurrentPhase('analysis');
+      console.log('🔍 STEP 1: Analysis');
+      
+      const analysisResult = await callAgent(endpoints.analyzer, prompts.initial_analysis, problemData.title);
+      addAgentInteraction('analyzer', 'analyze_problem', analysisResult);
+
+      // STEP 2: PLANNER (once) 
+      setCurrentPhase('planning');
+      console.log('📋 STEP 2: Planning');
+      
+      const planPrompt = prompts.planning.replace('{analysis}', analysisResult);
+      const planResult = await callAgent(endpoints.planner, planPrompt, problemData.title);
+      addAgentInteraction('planner', 'create_plan', planResult);
+
+      // STEP 3: CODER → REVIEWER LOOP (until "perfect")
+      setCurrentPhase('implementation');
+      console.log('💻 STEP 3: Code → Review Loop');
+      
+      let currentCode = '';
+      let codeIsPerfect = false;
+      let codeReviewIterations = 0;
+      const maxCodeReviews = 5;
+
+      while (!codeIsPerfect && codeReviewIterations < maxCodeReviews) {
+        codeReviewIterations++;
+        console.log(`\n🔄 Code Review Iteration ${codeReviewIterations}`);
+
+        // CODER: Generate/fix code
+        const coderPrompt = codeReviewIterations === 1 
+          ? prompts.initial_coding
+              .replace('{analysis}', analysisResult)
+              .replace('{plan}', planResult)
+          : buildCodeFixingPrompt(problemData, analysisResult, planResult, currentCode, 'reviewer_feedback');
+        
+        currentCode = await callAgent(endpoints.coder, coderPrompt, problemData.title, {
+          coding_type: codeReviewIterations === 1 ? 'initial' : 'fixing'
+        });
+        
+        addAgentInteraction('coder', 
+          codeReviewIterations === 1 ? 'generate_code' : 'fix_code', 
+          currentCode);
+
+        // REVIEWER: Check if code is perfect
+        const reviewPrompt = buildCodeReviewPrompt(problemData, currentCode, codeReviewIterations);
+        const reviewResult = await callAgent(endpoints.reviewer, reviewPrompt, problemData.title, {
+          review_type: 'code_review'
+        });
+        
+        addAgentInteraction('reviewer', 'review_code', reviewResult);
+
+        // Check if reviewer says "PERFECT"
+        codeIsPerfect = reviewResult.toLowerCase().includes("perfect") || 
+                       reviewResult.toLowerCase().includes("code_approved") ||
+                       reviewResult.toLowerCase().includes("looks good") ||
+                       codeReviewIterations >= maxCodeReviews;
+        
+        console.log(`Code Review ${codeReviewIterations}: ${codeIsPerfect ? 'PERFECT ✅' : 'NEEDS FIX ❌'}`);
+        
+        if (!codeIsPerfect) {
+          // Store reviewer feedback for next coder iteration
+          (window as any).lastReviewerFeedback = reviewResult;
+        }
+      }
+
+      // STEP 4: TESTING LOOP (until all tests pass)
+      console.log('🧪 STEP 4: Testing Loop');
+      
+      let allTestsPassed = false;
+      let testingIterations = 0;
+      let bestSuccessRate = 0;
+      
+      while (!allTestsPassed && testingIterations < maxIterations) {
+        testingIterations++;
+        console.log(`\n🧪 Testing Iteration ${testingIterations}`);
+
+        // TEST the solution using smart-handler
+        const testResponse = await fetch(endpoints.tester, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            problem_id: problemData.id,
+            solution_code: currentCode,
+            language: selectedLanguage
+          })
+        });
+
+        if (!testResponse.ok) {
+          throw new Error(`Testing failed: ${testResponse.status}`);
+        }
+
+        const testResults = await testResponse.json();
+        const successRate = testResults.success_rate;
+        setCurrentSuccessRate(successRate);
+        
+        // Store full test results data for detailed display
+        addAgentInteraction('tester', 'run_tests', 
+          JSON.stringify({
+            summary: `Success Rate: ${successRate}% (${testResults.passed_tests}/${testResults.total_tests})`,
+            success_rate: successRate,
+            total_tests: testResults.total_tests,
+            passed_tests: testResults.passed_tests,
+            failed_tests: testResults.failed_tests,
+            test_results: testResults.test_results,
+            overall_status: testResults.overall_status
+          }));
+
+        if (successRate === 100) {
+          allTestsPassed = true;
+          console.log('🎉 All tests passed!');
+          addAgentInteraction('system', 'all_tests_passed', '🎉 Perfect solution! All tests passed.');
+          
+          // Call code explainer for pedagogical assessment
+          await callCodeExplainer(currentCode, 'Iterative AI agent collaboration with testing');
+          
+          break;
+        }
+
+        // If tests failed, get reviewer analysis and fix code
+        if (successRate > bestSuccessRate) {
+          bestSuccessRate = successRate;
+          console.log(`📈 Test improvement: ${bestSuccessRate}%`);
+        }
+
+        // REVIEWER: Analyze test failures
+        const failedTests = testResults.test_results.filter((t: any) => !t.passed);
+        const testFailurePrompt = buildTestFailurePrompt(
+          problemData, currentCode, successRate, testResults.passed_tests, 
+          testResults.total_tests, failedTests
+        );
+        
+        const testReviewResult = await callAgent(endpoints.reviewer, testFailurePrompt, problemData.title, {
+          review_type: 'test_failure'
+        });
+        addAgentInteraction('reviewer', 'analyze_test_failures', testReviewResult);
+
+        // CODER: Fix code based on test failures
+        const testFixPrompt = buildTestFixingPrompt(
+          problemData, analysisResult, planResult, currentCode, testReviewResult
+        );
+        
+        currentCode = await callAgent(endpoints.coder, testFixPrompt, problemData.title, {
+          coding_type: 'test_fixing'
+        });
+        
+        addAgentInteraction('coder', 'fix_test_failures', currentCode);
+
+        // REVIEWER: Quick approval of test fix
+        const quickReviewPrompt = buildQuickReviewPrompt(problemData, currentCode);
+        const quickReviewResult = await callAgent(endpoints.reviewer, quickReviewPrompt, problemData.title, {
+          review_type: 'quick_approval'
+        });
+        addAgentInteraction('reviewer', 'approve_test_fix', quickReviewResult);
+
+        if (testingIterations >= maxIterations) {
+          console.log('⏹️ Max testing iterations reached');
+          addAgentInteraction('system', 'max_iterations', 
+            `Testing stopped after ${maxIterations} iterations. Best: ${bestSuccessRate}%`);
+          break;
+        }
+      }
+
+      // Final results
+      const finalResult = {
+        success: allTestsPassed,
+        final_code: currentCode,
+        success_rate: allTestsPassed ? 100 : bestSuccessRate,
+        interactions: agentInteractions,
+        total_iterations: testingIterations,
+        code_reviews: codeReviewIterations
+      };
+      
+      setIterativeResults(finalResult);
+      setDisplayCode(currentCode);
+      setCurrentPhase('complete');
+
+    } catch (error) {
+      console.error('Agent orchestration error:', error);
+      addAgentInteraction('system', 'error', `Process failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    } finally {
+      setIsIterativeProcessing(false);
+    }
+  };
+
+  // Helper function to build code review prompt
+  const buildCodeReviewPrompt = (problemData: any, code: string, iteration: number) => {
+    return `🔍 REVIEWER: Review this code for correctness and quality.
+
+Problem: ${problemData.title}
+Review Iteration: ${iteration}
+
+Code to Review:
+${code}
+
+Your review should check:
+1. **Logic Correctness**: Does the algorithm solve the problem correctly?
+2. **Edge Cases**: Are all edge cases handled?
+3. **Code Quality**: Is it clean, readable, and efficient?
+4. **Completeness**: Is anything missing?
+
+If the code is excellent and ready for testing, respond with "PERFECT" or "CODE_APPROVED".
+If there are issues, provide specific feedback on what needs to be fixed.`;
+  };
+
+  // Helper function to build code fixing prompt  
+  const buildCodeFixingPrompt = (problemData: any, analysis: string, plan: string, currentCode: string, feedbackSource: string) => {
+    const reviewerFeedback = (window as any).lastReviewerFeedback || 'Fix the issues mentioned';
+    
+    return `💻 CODER: Fix the code based on reviewer feedback.
+
+Problem: ${problemData.title}
+Language: ${selectedLanguage}
+
+Analysis Context:
+${analysis}
+
+Plan Context:
+${plan}
+
+Current Code:
+${currentCode}
+
+Reviewer Feedback:
+${reviewerFeedback}
+
+🚨 CRITICAL: Output ONLY the corrected Python code. No markdown, no explanations.
+Fix the issues mentioned by the reviewer and ensure the code is perfect.`;
+  };
+
+  // Helper function to build test failure prompt
+  const buildTestFailurePrompt = (problemData: any, code: string, successRate: number, passedTests: number, totalTests: number, failedTests: any[]) => {
+    return `🔍 REVIEWER: Analyze why tests are failing and provide fixing guidance.
+
+Problem: ${problemData.title}
+Current Code:
+${code}
+
+Test Results:
+- Success Rate: ${successRate}%
+- Passed: ${passedTests}/${totalTests} tests
+
+Failed Tests:
+${failedTests.map((test: any, i: number) => 
+  `${i + 1}. Input: ${test.input} → Expected: ${test.expected_output}, Got: ${test.actual_output}${test.error ? ` (Error: ${test.error})` : ''}`
+).join('\n')}
+
+Analyze:
+1. **Root Cause**: Why are these specific tests failing?
+2. **Pattern**: Is there a common issue across failures?
+3. **Fix Strategy**: What specific changes are needed?
+4. **Edge Cases**: Any missed edge cases?
+
+Provide clear, actionable guidance for the coder to fix these issues.`;
+  };
+
+  // Helper function to build test fixing prompt
+  const buildTestFixingPrompt = (problemData: any, analysis: string, plan: string, currentCode: string, reviewerAnalysis: string) => {
+    return `💻 CODER: Fix the failing tests based on reviewer analysis.
+
+Problem: ${problemData.title}
+Language: ${selectedLanguage}
+
+Original Analysis:
+${analysis}
+
+Original Plan:
+${plan}
+
+Current Failing Code:
+${currentCode}
+
+Reviewer's Test Failure Analysis:
+${reviewerAnalysis}
+
+🚨 CRITICAL: Output ONLY the corrected Python code. No markdown, no explanations.
+Fix the specific test failures identified by the reviewer. Ensure all edge cases are handled.`;
+  };
+
+  // Helper function to build quick review prompt
+  const buildQuickReviewPrompt = (problemData: any, code: string) => {
+    return `🔍 REVIEWER: Quick approval check for test-fixed code.
+
+Problem: ${problemData.title}
+
+Updated Code:
+${code}
+
+Quick check:
+1. Does the logic look sound?
+2. Are the test failure fixes applied?
+
+If it looks good, respond with "LOOKS_GOOD" or "APPROVED".
+If there are obvious issues, mention them briefly.`;
+  };
+
   const handleTestCode = async () => {
     if (!displayCode || !problem) return;
     
@@ -231,6 +707,8 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     
     // Show "Fix & Improve" button if tests fail and we're in manual mode
     setShowFixButton(true);
+    
+    // Call code explainer after testing completes (handled in useEffect)
   };
 
   // NEW: Handle analyze and fix functionality
@@ -414,6 +892,8 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
     }
   }, [reasoning]);
 
+
+
   const parseAgentReasoning = (reasoningText: string) => {
     const lines = reasoningText.split('\n');
     let currentAgent: string | null = null;
@@ -482,6 +962,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       id: 'analyzer',
       name: 'Analyzer',
       icon: Search,
+      emoji: '🔍',
       color: 'blue',
       description: 'Analyzes problem structure and constraints',
       bgColor: 'bg-blue-100 dark:bg-blue-900/50',
@@ -495,6 +976,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       id: 'planner',
       name: 'Planner',
       icon: PlaneTakeoff,
+      emoji: '🎯',
       color: 'purple',
       description: 'Develops solution strategy and approach',
       bgColor: 'bg-purple-100 dark:bg-purple-900/50',
@@ -508,6 +990,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       id: 'coder',
       name: 'Coder',
       icon: FileCode,
+      emoji: '💻',
       color: 'green',
       description: 'Implements the solution in code',
       bgColor: 'bg-green-100 dark:bg-green-900/50',
@@ -521,6 +1004,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
       id: 'reviewer',
       name: 'Reviewer',
       icon: Shield,
+      emoji: '✅',
       color: 'orange',
       description: 'Reviews and validates the solution',
       bgColor: 'bg-orange-100 dark:bg-orange-900/50',
@@ -534,6 +1018,328 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
 
   // NEW: Expandable agent states
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  
+  // NEW: Reasoning tab state
+  const [reasoningSelectedAgent, setReasoningSelectedAgent] = useState<string | null>(null);
+  
+  // Auto-select first agent when reasoning data becomes available
+  React.useEffect(() => {
+    const reasoningData = getReasoningData();
+    if (reasoningData.length > 0 && !reasoningSelectedAgent) {
+      setReasoningSelectedAgent(`${reasoningData[0].id}-0`);
+    }
+  }, [agentInteractions, agentOutputs, reasoningSelectedAgent]);
+  
+  // Enhanced markdown parser for Code Explainer content
+  const parseMarkdownContent = (content: string): React.ReactElement[] => {
+    if (!content) return [];
+    
+    const lines = content.split('\n');
+    const elements: React.ReactElement[] = [];
+    let inCodeBlock = false;
+    let codeContent: string[] = [];
+    let currentListItems: string[] = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      
+      // Handle code blocks
+      if (trimmedLine.startsWith('```')) {
+        if (inCodeBlock) {
+          // End code block
+          if (codeContent.length > 0) {
+            elements.push(
+              <div key={`code-${i}`} className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-sm my-3 overflow-x-auto">
+                <pre>{codeContent.join('\n')}</pre>
+              </div>
+            );
+          }
+          codeContent = [];
+          inCodeBlock = false;
+        } else {
+          // Start code block
+          inCodeBlock = true;
+          if (currentListItems.length > 0) {
+            elements.push(
+              <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+                {currentListItems.map((item, idx) => (
+                  <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+                ))}
+              </ul>
+            );
+            currentListItems = [];
+          }
+        }
+        continue;
+      }
+      
+      if (inCodeBlock) {
+        codeContent.push(line);
+        continue;
+      }
+      
+      // Handle headers
+      if (trimmedLine.startsWith('####')) {
+        if (currentListItems.length > 0) {
+          elements.push(
+            <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+              {currentListItems.map((item, idx) => (
+                <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+              ))}
+            </ul>
+          );
+          currentListItems = [];
+        }
+        
+        const headerText = trimmedLine.replace(/^####\s*/, '');
+        elements.push(
+          <h4 key={i} className="text-lg font-bold text-blue-900 mt-6 mb-3 border-b border-blue-200 pb-1">
+            {parseInlineMarkdown(headerText)}
+          </h4>
+        );
+      } else if (trimmedLine.startsWith('###')) {
+        if (currentListItems.length > 0) {
+          elements.push(
+            <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+              {currentListItems.map((item, idx) => (
+                <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+              ))}
+            </ul>
+          );
+          currentListItems = [];
+        }
+        
+        const headerText = trimmedLine.replace(/^###\s*/, '');
+        elements.push(
+          <h3 key={i} className="text-xl font-bold text-blue-900 mt-6 mb-4 border-b-2 border-blue-300 pb-2">
+            {parseInlineMarkdown(headerText)}
+          </h3>
+        );
+      }
+      // Handle list items
+      else if (trimmedLine.match(/^[-*]\s+/) || trimmedLine.match(/^\d+\.\s+/)) {
+        const listItemText = trimmedLine.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, '');
+        currentListItems.push(listItemText);
+      }
+      // Handle regular paragraphs
+      else if (trimmedLine) {
+        if (currentListItems.length > 0) {
+          elements.push(
+            <ul key={`list-${i}`} className="list-disc ml-6 space-y-1 my-3">
+              {currentListItems.map((item, idx) => (
+                <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+              ))}
+            </ul>
+          );
+          currentListItems = [];
+        }
+        
+        elements.push(
+          <p key={i} className="text-blue-800 mb-3 leading-relaxed">
+            {parseInlineMarkdown(trimmedLine)}
+          </p>
+        );
+      }
+      else if (!trimmedLine && elements.length > 0) {
+        elements.push(<div key={`space-${i}`} className="mb-2"></div>);
+      }
+    }
+    
+    if (currentListItems.length > 0) {
+      elements.push(
+        <ul key="final-list" className="list-disc ml-6 space-y-1 my-3">
+          {currentListItems.map((item, idx) => (
+            <li key={idx} className="text-blue-800">{parseInlineMarkdown(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+    
+    return elements;
+  };
+
+  // Parse inline markdown (bold, inline code, etc.)
+  const parseInlineMarkdown = (text: string): React.ReactNode => {
+    if (!text) return text;
+    
+    const boldRegex = /(\*\*.*?\*\*)/g;
+    const parts = text.split(boldRegex);
+    
+    return parts.map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return (
+          <strong key={index} className="font-bold text-blue-900">
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+      
+      const codeRegex = /(`[^`]+`)/g;
+      const codeParts = part.split(codeRegex);
+      
+      return codeParts.map((codePart, codeIndex) => {
+        if (codePart.startsWith('`') && codePart.endsWith('`')) {
+          return (
+            <code key={`${index}-${codeIndex}`} className="bg-gray-200 text-gray-800 px-1 py-0.5 rounded text-xs font-mono">
+              {codePart.slice(1, -1)}
+            </code>
+          );
+        }
+        return codePart;
+      });
+    });
+  };
+
+  // Parse structured content (similar to agent collaboration modal)
+  const parseStructuredContent = (content: string): React.ReactElement[] => {
+    if (!content || typeof content !== 'string') {
+      return [<div key="empty" className="text-gray-500">No content available</div>];
+    }
+    
+    // Split by patterns and create formatted elements
+    const lines = content.split('\n');
+    const elements: React.ReactElement[] = [];
+    
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      
+      if (!trimmedLine) {
+        elements.push(<br key={`br-${index}`} />);
+        return;
+      }
+      
+      // Handle various markdown patterns
+      if (trimmedLine.startsWith('### ')) {
+        elements.push(
+          <h3 key={index} className="text-lg font-bold text-gray-900 mt-4 mb-2">
+            {trimmedLine.substring(4)}
+          </h3>
+        );
+      } else if (trimmedLine.startsWith('#### ')) {
+        elements.push(
+          <h4 key={index} className="text-md font-bold text-gray-800 mt-3 mb-2">
+            {trimmedLine.substring(5)}
+          </h4>
+        );
+      } else if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('• ')) {
+        elements.push(
+          <div key={index} className="ml-4 mb-1 flex items-start gap-2">
+            <span className="text-blue-500 mt-1">•</span>
+            <span className="text-gray-700">{trimmedLine.substring(2)}</span>
+          </div>
+        );
+      } else {
+        // Regular text with bold formatting
+        const formattedText = trimmedLine.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        elements.push(
+          <p key={index} className="text-gray-700 mb-2 leading-relaxed" 
+             dangerouslySetInnerHTML={{ __html: formattedText }} />
+        );
+      }
+    });
+    
+    return elements;
+  };
+  
+  // NEW: Function to get comprehensive reasoning data from all modes
+  const getReasoningData = () => {
+    const allAgentData = [];
+    
+    // Manual mode: Use agentOutputs (from parsing reasoning text)
+    if (reasoning || agentOutputs.analyzer || agentOutputs.planner || agentOutputs.coder || agentOutputs.reviewer) {
+      agents.forEach(agent => {
+        const output = agentOutputs[agent.id as keyof typeof agentOutputs];
+        const isCompleted = completedAgents.includes(agent.id);
+        const isActive = activeAgent === agent.id;
+        
+        if (output || isCompleted || isActive) {
+          allAgentData.push({
+            id: agent.id,
+            name: agent.name,
+            description: agent.description,
+            icon: agent.icon,
+            emoji: agent.emoji,
+            color: agent.color,
+            bgColor: agent.bgColor,
+            borderColor: agent.borderColor,
+            iconColor: agent.iconColor,
+            content: output || '',
+            isActive,
+            isCompleted,
+            timestamp: new Date().toISOString(),
+            action: 'analysis'
+          });
+        }
+      });
+      
+      // Add explainer if available
+      if (agentOutputs.explainer) {
+        allAgentData.push({
+          id: 'explainer',
+          name: 'Code Explainer',
+          description: 'Educational analysis and quality assessment',
+          icon: null,
+          emoji: '🎓',
+          color: 'from-purple-600 to-purple-700',
+          bgColor: 'bg-purple-50',
+          borderColor: 'border-purple-200',
+          iconColor: 'text-purple-600',
+          content: agentOutputs.explainer,
+          isActive: false,
+          isCompleted: true,
+          timestamp: new Date().toISOString(),
+          action: 'educational_analysis'
+        });
+      }
+    }
+    
+    // Iterative mode: Use agentInteractions
+    if (agentInteractions && agentInteractions.length > 0) {
+      return agentInteractions.map(interaction => ({
+        id: interaction.agent,
+        name: interaction.agent === 'explainer' ? 'Code Explainer' : 
+              interaction.agent.charAt(0).toUpperCase() + interaction.agent.slice(1),
+        description: interaction.agent === 'explainer' ? 'Educational analysis and quality assessment' : 
+                    `AI ${interaction.agent} analysis`,
+        icon: null,
+        emoji: interaction.agent === 'analyzer' ? '🔍' :
+               interaction.agent === 'planner' ? '🎯' :
+               interaction.agent === 'coder' ? '💻' :
+               interaction.agent === 'reviewer' ? '✅' :
+               interaction.agent === 'tester' ? '🧪' :
+               interaction.agent === 'explainer' ? '🎓' : '🤖',
+        color: interaction.agent === 'explainer' ? 'from-purple-600 to-purple-700' :
+               interaction.agent === 'analyzer' ? 'from-blue-500 to-blue-600' :
+               interaction.agent === 'planner' ? 'from-purple-500 to-purple-600' :
+               interaction.agent === 'coder' ? 'from-green-500 to-green-600' :
+               interaction.agent === 'reviewer' ? 'from-orange-500 to-orange-600' :
+               'from-gray-500 to-gray-600',
+        bgColor: interaction.agent === 'explainer' ? 'bg-purple-50' :
+                interaction.agent === 'analyzer' ? 'bg-blue-50' :
+                interaction.agent === 'planner' ? 'bg-purple-50' :
+                interaction.agent === 'coder' ? 'bg-green-50' :
+                interaction.agent === 'reviewer' ? 'bg-orange-50' : 'bg-gray-50',
+        borderColor: interaction.agent === 'explainer' ? 'border-purple-200' :
+                    interaction.agent === 'analyzer' ? 'border-blue-200' :
+                    interaction.agent === 'planner' ? 'border-purple-200' :
+                    interaction.agent === 'coder' ? 'border-green-200' :
+                    interaction.agent === 'reviewer' ? 'border-orange-200' : 'border-gray-200',
+        iconColor: interaction.agent === 'explainer' ? 'text-purple-600' :
+                  interaction.agent === 'analyzer' ? 'text-blue-600' :
+                  interaction.agent === 'planner' ? 'text-purple-600' :
+                  interaction.agent === 'coder' ? 'text-green-600' :
+                  interaction.agent === 'reviewer' ? 'text-orange-600' : 'text-gray-600',
+        content: interaction.content,
+        isActive: false,
+        isCompleted: true,
+        timestamp: interaction.timestamp,
+        action: interaction.action
+      }));
+    }
+    
+    return allAgentData;
+  };
 
   const AgentCard = ({ agent, isActive, isCompleted, output }: {
     agent: typeof agents[0],
@@ -731,32 +1537,27 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
               </select>
             </div>
 
-            {/* NEW: Auto Mode Toggle */}
+            {/* AI Mode - Only Iterative Agent Collaboration */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Mode:</label>
-              <div className="flex items-center space-x-3 p-3 border border-border rounded-lg bg-background">
-                <button
-                  onClick={() => setAutoMode(!autoMode)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    autoMode ? 'bg-green-600' : 'bg-gray-300'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      autoMode ? 'translate-x-6' : 'translate-x-1'
-                    }`}
-                  />
-                </button>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium">
-                    {autoMode ? 'Auto-Test & Fix' : 'Manual Control'}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {autoMode 
-                      ? 'Generate → Test → Fix automatically' 
-                      : 'Manual testing and improvement'
-                    }
-                  </span>
+              <label className="text-sm font-medium">AI Mode:</label>
+              <div className="space-y-2">
+                {/* Iterative Agent Mode - Always Active */}
+                <div className="flex items-center space-x-3 p-3 border border-purple-500 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg">
+                  <div className="w-4 h-4 rounded-full border-2 border-purple-500 bg-purple-500">
+                    <div className="w-2 h-2 bg-white rounded-full m-0.5" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium flex items-center gap-2">
+                      Iterative Agent Collaboration
+                      <Badge variant="secondary" className="bg-gradient-to-r from-purple-100 to-blue-100 text-purple-700">
+                        <Sparkles className="w-3 h-3 mr-1" />
+                        ACTIVE
+                      </Badge>
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Analyzer → Planner → Coder ↔ Reviewer → Test → Fix until perfect
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -765,32 +1566,31 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
             <div className="space-y-2">
               <Button 
                 onClick={handleStartAI}
-                disabled={isStreaming || sessionLoading}
-                className="w-full"
+                disabled={isStreaming || sessionLoading || isIterativeProcessing}
+                className="w-full bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
               >
-                {isStreaming ? (
+                {isStreaming || isIterativeProcessing ? (
                   <>
                     <Square className="w-4 h-4 mr-2" />
-                    Stop AI
+                    Stop Agents
                   </>
                 ) : (
                   <>
                     <Play className="w-4 h-4 mr-2" />
-                    Solve with AI
+                    Start Agent Collaboration
                   </>
                 )}
               </Button>
               
-              {/* Show Fix & Improve button when tests fail in manual mode */}
-              {!autoMode && showFixButton && results && results.success_rate < 100 && (
+              {/* View Agent Process button when collaboration completes */}
+              {iterativeResults && !isIterativeProcessing && (
                 <Button 
-                  onClick={handleFixAndImprove}
-                  disabled={sessionLoading || isStreaming}
-                  variant="secondary"
-                  className="w-full"
+                  onClick={() => setShowAgentModal(true)}
+                  variant="outline"
+                  className="w-full border-purple-300 text-purple-700 hover:bg-purple-50"
                 >
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  Fix & Improve
+                  <Brain className="w-4 h-4 mr-2" />
+                  View Agent Collaboration Process
                 </Button>
               )}
             </div>
@@ -839,99 +1639,290 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
             </TabsList>
             
             <TabsContent value="reasoning" className="space-y-4">
-              <div className="h-[500px] overflow-y-auto">
-                <AnimatePresence>
-                  {reasoning || isStreaming ? (
-                    <div className="space-y-6 pr-2">
-                      {/* Compact Multi-Agent Progress Header */}
-                      <div className="bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900/40 dark:to-purple-900/40 rounded-lg p-3 border-2 border-blue-300 dark:border-blue-600">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <Brain className="w-5 h-5 text-blue-700 dark:text-blue-300" />
+              <div className="h-[500px] overflow-hidden">
+                {(() => {
+                  const reasoningData = getReasoningData();
+                  
+                  if (reasoningData.length === 0 && !isStreaming) {
+                    return (
+                      <div className="flex items-center justify-center h-full text-muted-foreground">
+                        <div className="text-center space-y-6">
+                          {/* Agent Preview */}
+                          <div className="grid grid-cols-4 gap-3">
+                            {agents.map((agent, index) => (
+                              <div key={agent.id} className="text-center">
+                                <div className={`p-3 rounded-lg ${agent.bgColor} border-2 ${agent.borderColor} mb-2 opacity-50`}>
+                                  <agent.icon className={`w-5 h-5 ${agent.iconColor} mx-auto opacity-70`} />
+                                </div>
+                                <span className="text-xs text-gray-500 font-medium">{agent.name}</span>
+                              </div>
+                            ))}
+                          </div>
                             <div>
-                              <h3 className="font-bold text-blue-900 dark:text-blue-100 text-sm">
-                                Multi-Agent Reasoning System
-                              </h3>
-                              <p className="text-xs text-blue-700 dark:text-blue-300">
-                                {activeAgent 
-                                  ? `${agents.find(a => a.id === activeAgent)?.name} Agent is working...`
-                                  : completedAgents.length === agents.length
-                                  ? 'All agents completed their analysis'
-                                  : 'Ready to analyze your problem'
-                                }
-                              </p>
+                            <Brain className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                            <p className="font-medium text-gray-600 dark:text-gray-300">Multi-agent reasoning will appear here</p>
+                            <p className="text-xs mt-1 text-gray-500">Click "Solve with AI" to see each agent contribute their expertise</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  // Use two-panel layout like the modals
+                  return (
+                    <div className="flex h-full bg-white rounded-lg border border-gray-200 shadow-sm">
+                      {/* Left Panel: Agent Timeline */}
+                      <div className="w-1/4 border-r border-gray-200 p-4 overflow-y-auto bg-gray-50">
+                        <div className="space-y-3">
+                          <div className="text-sm font-medium text-gray-700 mb-4">Agent Timeline</div>
+                          
+                          {reasoningData.map((agentData, index) => {
+                            const isSelected = reasoningSelectedAgent === `${agentData.id}-${index}`;
+                            const hasContent = agentData.content && agentData.content.trim().length > 0;
+                            
+                            return (
+                              <div
+                                key={`${agentData.id}-${index}`}
+                                onClick={() => hasContent && setReasoningSelectedAgent(`${agentData.id}-${index}`)}
+                                className={`p-3 rounded-lg border transition-all duration-200 cursor-pointer ${
+                                  isSelected
+                                    ? 'border-blue-300 bg-blue-50 shadow-sm'
+                                    : hasContent
+                                    ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                                    : 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 mb-2">
+                                  <div className={`p-1.5 rounded-lg ${
+                                    isSelected 
+                                      ? `bg-gradient-to-r ${agentData.color} text-white shadow-sm`
+                                      : hasContent
+                                      ? `${agentData.bgColor} ${agentData.iconColor}`
+                                      : 'bg-gray-200 text-gray-400'
+                                  }`}>
+                                    {agentData.icon && typeof agentData.icon === 'function' ? (
+                                      React.createElement(agentData.icon as any, { className: "w-3 h-3" })
+                                    ) : (
+                                      <span className="text-xs">{agentData.emoji}</span>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-medium text-sm text-gray-900 truncate flex items-center gap-1">
+                                      <span className="text-xs">{agentData.emoji}</span>
+                                      <span>{agentData.name}</span>
                             </div>
                           </div>
                           
-                          {/* Compact Progress Indicator */}
-                          <div className="text-right">
-                            <span className="text-xs text-blue-700 dark:text-blue-300 font-bold">
-                              {completedAgents.length}/{agents.length}
-                            </span>
-                            <div className="w-16 bg-blue-200 dark:bg-blue-800 rounded-full h-1.5 mt-1">
-                              <motion.div
-                                className="bg-gradient-to-r from-blue-600 to-purple-600 h-1.5 rounded-full"
-                                initial={{ width: 0 }}
-                                animate={{ width: `${(completedAgents.length / agents.length) * 100}%` }}
-                                transition={{ duration: 0.5 }}
-                              />
+                                  <div className="flex-shrink-0">
+                                    {agentData.isActive && <Activity className="w-3 h-3 animate-spin text-green-500" />}
+                                    {agentData.isCompleted && !agentData.isActive && <CheckCircle className="w-3 h-3 text-blue-500" />}
                             </div>
                           </div>
+
+                                <div className="text-xs text-gray-600">
+                                  {agentData.isActive ? 'Working...' : 
+                                   agentData.isCompleted ? 'Complete' : 'Waiting'}
+                                </div>
+
+                                {/* Status indicator bar */}
+                                <div className="mt-2 h-1 bg-gray-200 rounded-full overflow-hidden">
+                                  <div className={`h-1 rounded-full transition-all duration-300 ${
+                                    agentData.isCompleted 
+                                      ? 'bg-blue-500 w-full' 
+                                      : agentData.isActive
+                                      ? 'bg-green-500 w-3/4 animate-pulse'
+                                      : hasContent
+                                      ? 'bg-yellow-500 w-1/2'
+                                      : 'bg-gray-300 w-0'
+                                  }`} />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
 
-                      {/* Compact Agent Cards */}
-                      <div className="space-y-1">
-                        {agents.map((agent, index) => (
-                          <AgentCard
-                            key={agent.id}
-                            agent={agent}
-                            isActive={activeAgent === agent.id}
-                            isCompleted={completedAgents.includes(agent.id)}
-                            output={agentOutputs[agent.id as keyof typeof agentOutputs]}
-                          />
-                        ))}
+                      {/* Right Panel: Selected Agent Content */}
+                      <div className="flex-1 p-6 overflow-y-auto bg-white">
+                        {reasoningSelectedAgent ? (() => {
+                          const selectedData = reasoningData.find((data, index) => 
+                            `${data.id}-${index}` === reasoningSelectedAgent
+                          );
+                          
+                          if (!selectedData) {
+                            return (
+                              <div className="flex items-center justify-center h-full text-gray-500">
+                                <div className="text-center">
+                                  <Brain className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                                  <p>Agent content not found</p>
                       </div>
-
-                      {/* Auto-mode specific indicators */}
-                      {autoMode && status === 'thinking' && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg p-3"
-                        >
-                          <div className="flex items-center space-x-2">
-                            <Zap className="w-4 h-4 text-green-600 dark:text-green-400 animate-pulse" />
-                            <span className="text-sm font-medium text-green-800 dark:text-green-200">
-                              Auto-mode: Will automatically test and improve after generation
-                            </span>
+                              </div>
+                            );
+                          }
+                          
+                          return (
+                            <div className="space-y-4">
+                              {/* Agent Header */}
+                              <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
+                                <div className={`p-2 rounded-lg ${selectedData.bgColor}`}>
+                                  {selectedData.icon && typeof selectedData.icon === 'function' ? (
+                                    React.createElement(selectedData.icon as any, { className: `w-5 h-5 ${selectedData.iconColor}` })
+                                  ) : (
+                                    <span className="text-lg">{selectedData.emoji}</span>
+                                  )}
                           </div>
-                        </motion.div>
+                                <div>
+                                  <h3 className="text-lg font-bold text-gray-900">{selectedData.name}</h3>
+                                  <p className="text-sm text-gray-600">{selectedData.description}</p>
+                                </div>
+                                {selectedData.isCompleted && (
+                                  <div className="ml-auto">
+                                    <CheckCircle className="w-5 h-5 text-green-500" />
+                                  </div>
                       )}
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-[400px] text-muted-foreground">
-                      <div className="text-center space-y-6">
-                        {/* Agent Preview */}
-                        <div className="grid grid-cols-4 gap-3">
-                          {agents.map((agent, index) => (
-                            <div key={agent.id} className="text-center">
-                              <div className={`p-3 rounded-lg ${agent.bgColor} border-2 ${agent.borderColor} mb-2 opacity-50`}>
-                                <agent.icon className={`w-5 h-5 ${agent.iconColor} mx-auto opacity-70`} />
+                              
+                              {/* Agent Content */}
+                              {selectedData.action === 'educational_analysis' ? (
+                                // Special handling for Code Explainer
+                                <div className="space-y-4">
+                                  {(() => {
+                                    try {
+                                      const explainerData = JSON.parse(selectedData.content as string);
+                                      const rubric = explainerData.rubric_evaluation || {};
+                                      
+                                      return (
+                                        <>
+                                          {/* Explanation */}
+                                          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                                            <h4 className="font-bold text-blue-900 mb-2">📚 Code Explanation</h4>
+                                            <div className="text-sm leading-relaxed">
+                                              {explainerData.explanation ? 
+                                                parseMarkdownContent(explainerData.explanation) : 
+                                                <p className="text-blue-800">No explanation available</p>
+                                              }
                               </div>
-                              <span className="text-xs text-gray-500 font-medium">{agent.name}</span>
+                                          </div>
+
+                                          {/* Rubric Evaluation */}
+                                          {rubric && (
+                                            <div className="bg-gray-50 p-4 rounded-lg border">
+                                              <div className="flex items-center justify-between mb-3">
+                                                <h4 className="font-bold text-gray-900">📊 Code Quality Assessment</h4>
+                                                <div className="px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
+                                                  Grade: {rubric.grade || 'N/A'}
+                                                </div>
+                                              </div>
+                                              
+                                              {/* Scores Grid */}
+                                              <div className="grid grid-cols-3 md:grid-cols-5 gap-2 mb-3">
+                                                <div className="text-center p-2 bg-white rounded border">
+                                                  <div className="font-bold text-lg text-green-600">{rubric.correctness_score || 0}/5</div>
+                                                  <div className="text-xs text-gray-600">Correctness</div>
+                                                </div>
+                                                <div className="text-center p-2 bg-white rounded border">
+                                                  <div className="font-bold text-lg text-blue-600">{rubric.efficiency_score || 0}/5</div>
+                                                  <div className="text-xs text-gray-600">Efficiency</div>
+                                                </div>
+                                                <div className="text-center p-2 bg-white rounded border">
+                                                  <div className="font-bold text-lg text-purple-600">{rubric.structure_score || 0}/5</div>
+                                                  <div className="text-xs text-gray-600">Structure</div>
+                                                </div>
+                                                <div className="text-center p-2 bg-white rounded border">
+                                                  <div className="font-bold text-lg text-orange-600">{rubric.readability_score || 0}/5</div>
+                                                  <div className="text-xs text-gray-600">Readability</div>
+                                                </div>
+                                                <div className="text-center p-2 bg-white rounded border">
+                                                  <div className="font-bold text-lg text-indigo-600">{rubric.robustness_score || 0}/5</div>
+                                                  <div className="text-xs text-gray-600">Robustness</div>
+                                                </div>
+                                              </div>
+
+                                              {/* Overall Score */}
+                                              <div className="text-center p-3 bg-gradient-to-r from-purple-100 to-blue-100 rounded border border-purple-200">
+                                                <div className="font-bold text-xl text-purple-700">
+                                                  Overall: {rubric.overall_score || 0}/5
+                                                </div>
+                                                <div className="text-sm text-purple-600">
+                                                  {rubric.summary || 'Assessment completed'}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </>
+                                      )
+                                    } catch (e) {
+                                      // Fallback for parsing errors - still try to format as markdown
+                                      const content = typeof selectedData.content === 'string' ? selectedData.content : JSON.stringify(selectedData.content, null, 2);
+                                      return (
+                                        <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                                          <h4 className="font-bold text-purple-900 mb-2">🎓 Educational Analysis</h4>
+                                          <div className="text-sm">
+                                            {parseMarkdownContent(content)}
+                                          </div>
+                                        </div>
+                                      )
+                                    }
+                                  })()}
+                                </div>
+                              ) : selectedData.action === 'run_tests' ? (
+                                // Special handling for test results
+                                <div className="space-y-4">
+                                  {(() => {
+                                    try {
+                                      const testData = JSON.parse(selectedData.content as string)
+                                      return (
+                                        <div className="bg-gray-50 p-4 rounded-lg border">
+                                          <h4 className="font-bold text-gray-900 mb-2">🧪 Test Results</h4>
+                                          <div className="space-y-2">
+                                            <div className="text-sm">
+                                              Success Rate: <span className="font-bold">{testData.success_rate}%</span>
+                                            </div>
+                                            {testData.test_results && testData.test_results.map((test: any, idx: number) => (
+                                              <div key={idx} className={`p-3 rounded border ${test.passed ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                                                <div className="text-sm">
+                                                  Test {idx + 1}: {test.passed ? '✅ PASSED' : '❌ FAILED'}
+                                                </div>
+                                                {!test.passed && test.error && (
+                                                  <div className="text-xs text-red-600 mt-1">
+                                                    Error: {test.error}
+                                                  </div>
+                                                )}
                             </div>
                           ))}
                         </div>
-                        <div>
-                          <Brain className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                          <p className="font-medium text-gray-600 dark:text-gray-300">Multi-agent reasoning will appear here</p>
-                          <p className="text-xs mt-1 text-gray-500">Click "Solve with AI" to see each agent contribute their expertise</p>
                         </div>
+                                      )
+                                    } catch (e) {
+                                      return (
+                                        <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                                          {selectedData.content}
                       </div>
+                                      )
+                                    }
+                                  })()}
+                                </div>
+                              ) : (
+                                // Regular agent content with markdown parsing
+                                <div className="text-sm text-gray-800 leading-relaxed space-y-3">
+                                  {parseStructuredContent(selectedData.content as string)}
                     </div>
                   )}
-                </AnimatePresence>
+                            </div>
+                          );
+                        })() : (
+                          <div className="flex items-center justify-center h-full text-gray-500">
+                            <div className="text-center">
+                              <Brain className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                              <p>Select an agent from the timeline to view their analysis</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </TabsContent>
             
@@ -1068,27 +2059,7 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
                     <Edit className="w-4 h-4 mr-2" />
                     Edit Code
                   </Button>
-                  
-                  {/* Only show Test Code button in manual mode */}
-                  {!autoMode && (
-                    <Button 
-                      onClick={handleTestCode}
-                      disabled={isTesting}
-                      className="flex-1"
-                    >
-                      {isTesting ? (
-                        <>
-                          <Activity className="w-4 h-4 mr-2 animate-spin" />
-                          Testing Code...
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="w-4 h-4 mr-2" />
-                          Test Code
-                        </>
-                      )}
-                    </Button>
-                  )}
+
                 </div>
               )}
             </TabsContent>
@@ -1363,35 +2334,62 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
                   </div>
                 </div>
 
-                {/* Test Results Section */}
-                {results && (
+                {/* Agent Collaboration Results Section */}
+                {iterativeResults && (
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between pb-2 border-b-2 border-green-100 dark:border-green-900">
+                    <div className="flex items-center justify-between pb-2 border-b-2 border-purple-100 dark:border-purple-900">
                       <h3 className="text-xl font-bold flex items-center space-x-3">
-                        <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
-                          <Target className="w-6 h-6 text-green-600 dark:text-green-400" />
+                        <div className="p-2 bg-gradient-to-r from-purple-100 to-blue-100 dark:from-purple-900 dark:to-blue-900 rounded-lg">
+                          <Brain className="w-6 h-6 text-purple-600 dark:text-purple-400" />
                         </div>
-                        <span className="text-green-900 dark:text-green-100">Test Results</span>
+                        <span className="text-purple-900 dark:text-purple-100">Agent Collaboration Results</span>
+                        <Badge variant="secondary" className="bg-gradient-to-r from-purple-100 to-blue-100 text-purple-700">
+                          <Sparkles className="w-3 h-3 mr-1" />
+                          NEW
+                        </Badge>
                       </h3>
                     </div>
                     
-                    <div className="bg-white dark:bg-gray-800 border border-green-200 dark:border-green-800 rounded-xl p-6 shadow-sm">
-                      <div className="flex items-center justify-between mb-4">
-                        <span className="text-lg font-semibold text-green-900 dark:text-green-100">Overall Performance</span>
+                    <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-800 rounded-xl p-6 shadow-sm">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-purple-600">
+                            {iterativeResults.success_rate}%
+                          </div>
+                          <div className="text-sm text-purple-700 dark:text-purple-300">Success Rate</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-blue-600">
+                            {iterativeResults.total_iterations}
+                          </div>
+                          <div className="text-sm text-blue-700 dark:text-blue-300">Iterations</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-indigo-600">
+                            {iterativeResults.interactions?.length || 0}
+                          </div>
+                          <div className="text-sm text-indigo-700 dark:text-indigo-300">Agent Actions</div>
+                        </div>
+                      </div>
+
+                      <div className="text-center">
                         <Badge 
-                          variant={results.success_rate === 100 ? 'default' : 'secondary'}
+                          variant={iterativeResults.success ? 'default' : 'secondary'}
                           className={`px-4 py-2 text-lg font-bold ${
-                            results.success_rate === 100 
+                            iterativeResults.success 
                               ? 'bg-green-600 text-white' 
-                              : 'bg-yellow-500 text-white'
+                              : 'bg-orange-500 text-white'
                           }`}
                         >
-                          {results.success_rate}% Success
+                          {iterativeResults.success ? '🎉 Perfect Solution!' : `Best Attempt: ${iterativeResults.success_rate}%`}
                         </Badge>
                       </div>
-                      <div className="text-lg text-green-700 dark:text-green-300">
-                        <strong>{results.passed_tests}</strong> out of <strong>{results.total_tests}</strong> test cases passed
-                      </div>
+
+                      {iterativeResults.success && (
+                        <div className="mt-4 text-center text-sm text-green-700 dark:text-green-300">
+                          ✅ All test cases passed through iterative agent collaboration
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1680,6 +2678,12 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
         code={code}
         status={status}
         isStreaming={isStreaming}
+        results={results}
+        displayCode={displayCode}
+        problem={problem}
+        selectedLanguage={selectedLanguage}
+        iterativeAgentMode={iterativeAgentMode}
+        callCodeExplainer={callCodeExplainer}
       />
 
       {/* Test Case Preview Modal */}
@@ -1694,6 +2698,19 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
         onTestWithSelected={handleTestWithSelected}
         isSaving={isSavingTestCases}
         problemTitle={problem?.title}
+      />
+
+
+
+      {/* NEW: Agent Collaboration Modal */}
+      <AgentCollaborationModal
+        isOpen={showAgentModal}
+        onClose={() => setShowAgentModal(false)}
+        problemTitle={problem?.title || 'Problem'}
+        interactions={agentInteractions}
+        currentPhase={currentPhase}
+        successRate={currentSuccessRate}
+        isProcessing={isIterativeProcessing}
       />
     </div>
   );

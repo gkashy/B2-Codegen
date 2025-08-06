@@ -80,17 +80,20 @@ export function TestCasePreviewModal({
     const detectDataType = (val: any) => {
       if (!Array.isArray(val)) return null;
       
-      // Sudoku grid (9x9)
-      if (val.length === 9 && Array.isArray(val[0]) && val[0].length === 9) {
+      // Sudoku grid (9x9) - ensure all rows are arrays with length 9
+      if (val.length === 9 && val.every(row => Array.isArray(row) && row.length === 9)) {
         return { type: 'sudoku', data: val };
       }
-      if (val.length === 1 && Array.isArray(val[0]) && val[0].length === 9 && Array.isArray(val[0][0]) && val[0][0].length === 9) {
+      if (val.length === 1 && Array.isArray(val[0]) && val[0].length === 9 && val[0].every(row => Array.isArray(row) && row.length === 9)) {
         return { type: 'sudoku', data: val[0] };
       }
       
-      // Matrix/2D array
-      if (val.length > 1 && val.length <= 10 && Array.isArray(val[0]) && val[0].length <= 10) {
-        return { type: 'matrix', data: val };
+      // Matrix/2D array - check if most elements are arrays (allowing for some inconsistency)
+      if (val.length > 1 && val.length <= 10) {
+        const arrayRows = val.filter(row => Array.isArray(row));
+        if (arrayRows.length > 0 && arrayRows[0].length <= 10) {
+          return { type: 'matrix', data: val };
+        }
       }
       
       // Simple array (numbers/strings)
@@ -115,8 +118,8 @@ export function TestCasePreviewModal({
           return (
             <div className="w-fit mx-auto">
               <div className="grid grid-cols-9 gap-0 bg-gray-800 p-3 rounded-lg border-2 border-gray-300">
-                {dataType.data.map((row: any[], rowIndex: number) => 
-                  row.map((cell: string, colIndex: number) => {
+                {dataType.data.map((row: any, rowIndex: number) => 
+                  Array.isArray(row) ? row.map((cell: string, colIndex: number) => {
                     const isThickRight = (colIndex + 1) % 3 === 0 && colIndex < 8;
                     const isThickBottom = (rowIndex + 1) % 3 === 0 && rowIndex < 8;
                     
@@ -133,7 +136,14 @@ export function TestCasePreviewModal({
                         {cell === '.' ? '·' : cell}
                       </div>
                     );
-                  })
+                  }) : (
+                    <div 
+                      key={rowIndex}
+                      className="w-10 h-10 flex items-center justify-center text-base font-bold bg-white border border-gray-400 text-gray-900 hover:bg-blue-50 transition-colors"
+                    >
+                      {row === '.' ? '·' : row}
+                    </div>
+                  )
                 )}
               </div>
               <div className="text-center mt-2 text-xs text-gray-500">9×9 Sudoku Grid</div>
@@ -144,20 +154,27 @@ export function TestCasePreviewModal({
           return (
             <div className="w-fit mx-auto">
               <div className="bg-gray-100 p-4 rounded-lg border">
-                <div className="grid gap-1" style={{gridTemplateColumns: `repeat(${dataType.data[0].length}, minmax(0, 1fr))`}}>
-                  {dataType.data.map((row: any[], rowIndex: number) => 
-                    row.map((cell: any, colIndex: number) => (
+                <div className="grid gap-1" style={{gridTemplateColumns: `repeat(${Array.isArray(dataType.data[0]) ? dataType.data[0].length : 1}, minmax(0, 1fr))`}}>
+                  {dataType.data.map((row: any, rowIndex: number) => 
+                    Array.isArray(row) ? row.map((cell: any, colIndex: number) => (
                       <div 
                         key={`${rowIndex}-${colIndex}`}
                         className="w-12 h-8 flex items-center justify-center text-sm font-mono bg-white border border-gray-300 rounded"
                       >
                         {cell}
                       </div>
-                    ))
+                    )) : (
+                      <div 
+                        key={rowIndex}
+                        className="w-12 h-8 flex items-center justify-center text-sm font-mono bg-white border border-gray-300 rounded"
+                      >
+                        {row}
+                      </div>
+                    )
                   )}
                 </div>
                 <div className="text-center mt-2 text-xs text-gray-500">
-                  {dataType.data.length}×{dataType.data[0].length} Matrix
+                  {dataType.data.length}×{Array.isArray(dataType.data[0]) ? dataType.data[0].length : 1} Matrix
                 </div>
               </div>
             </div>
