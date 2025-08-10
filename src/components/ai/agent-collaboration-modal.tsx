@@ -1009,23 +1009,6 @@ export function AgentCollaborationModal({
                                             </div>
                                           </div>
 
-                                          {/* API Rate Limit Notice */}
-                                          {testData.api_limit_reached && (
-                                            <div className="bg-yellow-50 border border-yellow-200 p-3 rounded">
-                                              <div className="flex items-center space-x-2 mb-2">
-                                                <span className="text-yellow-600">🚫</span>
-                                                <span className="text-sm font-medium text-yellow-800">Judge0 API Rate Limit Reached</span>
-                                              </div>
-                                              <div className="text-xs text-yellow-700">
-                                                • Completed {testData.total_tests} test cases before limit was reached
-                                                <br />
-                                                • {testData.tests_not_executed} test cases were not executed
-                                                <br />
-                                                • {testData.remaining_time ? `Please try again in ${Math.ceil(testData.remaining_time / 60)} minutes` : 'Please try again later'}
-                                              </div>
-                                            </div>
-                                          )}
-                                          
                                           {/* Summary */}
                                           <div className="bg-gray-50 p-3 rounded border">
                                             <div className="text-lg font-bold text-gray-900">

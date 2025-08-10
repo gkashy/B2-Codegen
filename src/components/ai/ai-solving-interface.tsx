@@ -45,6 +45,7 @@ import { Problem } from '@/types/backend';
 import StreamingModal from './streaming-modal';
 import { TestCasePreviewModal } from './test-case-preview-modal';
 import { AgentCollaborationModal } from './agent-collaboration-modal';
+import { RateLimitModal } from './rate-limit-modal';
 
 interface AISolvingInterfaceProps {
   problemId: number;
@@ -63,6 +64,13 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
   const [isIterativeProcessing, setIsIterativeProcessing] = useState(false);
   const [iterativeResults, setIterativeResults] = useState<any>(null);
   const [showAgentModal, setShowAgentModal] = useState(false);
+  const [showRateLimitModal, setShowRateLimitModal] = useState(false);
+  const [rateLimitData, setRateLimitData] = useState<{
+    message?: string;
+    remainingTime?: number;
+    testsCompleted?: number;
+    testsNotExecuted?: number;
+  }>({});
   const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
   const [currentPhase, setCurrentPhase] = useState<'analysis' | 'planning' | 'implementation' | 'complete'>('analysis');
   const [currentSuccessRate, setCurrentSuccessRate] = useState(0);
@@ -498,8 +506,18 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
         // Check for API rate limit reached
         if (testResults.api_limit_reached) {
           console.log('🚫 Judge0 API rate limit reached, stopping execution');
+          
+          // Store rate limit data and show modal
+          setRateLimitData({
+            message: testResults.message,
+            remainingTime: testResults.remaining_time,
+            testsCompleted: testResults.total_tests || 0,
+            testsNotExecuted: testResults.tests_not_executed || 0
+          });
+          setShowRateLimitModal(true);
+          
           addAgentInteraction('system', 'api_limit_reached', 
-            `🚫 Judge0 API Rate Limit Reached\n\n${testResults.message}\n\nCompleted ${testResults.total_tests} test cases before limit was reached. ${testResults.tests_not_executed} test cases were not executed.\n\n${testResults.remaining_time ? `Please try again in ${Math.ceil(testResults.remaining_time / 60)} minutes.` : 'Please try again later.'}`
+            `🚫 Judge0 API Rate Limit Reached - All processes stopped. Modal displayed to user.`
           );
           break; // Stop execution when rate limit is reached
         }
@@ -828,7 +846,14 @@ If there are obvious issues, mention them briefly.`;
       
       // Check for API rate limit
       if (testResults.api_limit_reached) {
-        alert(`🚫 Judge0 API Rate Limit Reached\n\n${testResults.message}\n\nCompleted ${testResults.total_tests} test cases before limit was reached.\n${testResults.tests_not_executed} test cases were not executed.\n\n${testResults.remaining_time ? `Please try again in ${Math.ceil(testResults.remaining_time / 60)} minutes.` : 'Please try again later.'}`);
+        // Store rate limit data and show modal
+        setRateLimitData({
+          message: testResults.message,
+          remainingTime: testResults.remaining_time,
+          testsCompleted: testResults.total_tests || 0,
+          testsNotExecuted: testResults.tests_not_executed || 0
+        });
+        setShowRateLimitModal(true);
       } else {
         // You could display these results in a special modal or section
         // For now, we'll just log them
@@ -2488,26 +2513,6 @@ If there are obvious issues, mention them briefly.`;
             
             {results && (
               <div className="space-y-4">
-                {/* API Rate Limit Notice */}
-                {results.api_limit_reached && (
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg dark:bg-yellow-900/20 dark:border-yellow-800">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 text-yellow-600">🚫</div>
-                      <span className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Judge0 API Rate Limit Reached</span>
-                    </div>
-                    <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-2">
-                      {results.message}
-                    </p>
-                    <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
-                      • Completed {results.total_tests} test cases before limit was reached
-                      <br />
-                      • {results.tests_not_executed} test cases were not executed
-                      <br />
-                      • {results.remaining_time ? `Please try again in ${Math.ceil(results.remaining_time / 60)} minutes` : 'Please try again later'}
-                    </div>
-                  </div>
-                )}
-                
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Overall Status</span>
                   <Badge variant={results.success_rate === 100 ? 'default' : (results.api_limit_reached ? 'outline' : 'secondary')}>
@@ -2752,6 +2757,16 @@ If there are obvious issues, mention them briefly.`;
         currentPhase={currentPhase}
         successRate={currentSuccessRate}
         isProcessing={isIterativeProcessing}
+      />
+
+      {/* Rate Limit Modal */}
+      <RateLimitModal
+        isOpen={showRateLimitModal}
+        onClose={() => setShowRateLimitModal(false)}
+        message={rateLimitData.message}
+        remainingTime={rateLimitData.remainingTime}
+        testsCompleted={rateLimitData.testsCompleted}
+        testsNotExecuted={rateLimitData.testsNotExecuted}
       />
     </div>
   );
