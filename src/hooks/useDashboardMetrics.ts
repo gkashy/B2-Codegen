@@ -214,6 +214,192 @@ export function useRecentProblems() {
   });
 }
 
+// Recent Activity Feed
+export function useRecentActivity() {
+  return useQuery({
+    queryKey: ['recent-activity'],
+    queryFn: async () => {
+      try {
+        // Fetch recent solution attempts with problem details
+        const { data: attempts, error } = await supabase
+          .from('solution_attempts')
+          .select(`
+            id,
+            problem_id,
+            success_rate,
+            language,
+            created_at,
+            attempt_number,
+            generated_code,
+            reasoning_content,
+            problems (
+              title,
+              difficulty
+            )
+          `)
+          .order('created_at', { ascending: false })
+          .limit(15);
+
+        if (error) {
+          console.warn('Failed to fetch recent activity:', error);
+          return [];
+        }
+
+        return (attempts || []).map((attempt, index) => {
+          const timeAgo = getTimeAgo(attempt.created_at);
+          const isSuccess = attempt.success_rate >= 80;
+          const isGenerated = attempt.generated_code?.length > 0;
+          
+          let type = 'analysis';
+          let description = `Analyzed problem with ${Math.round(attempt.success_rate)}% success rate`;
+          
+          if (isSuccess) {
+            type = 'success';
+            description = `Successfully solved with ${Math.round(attempt.success_rate)}% accuracy`;
+          } else if (attempt.success_rate < 50) {
+            type = 'failed';
+            description = `Solution struggled with ${Math.round(attempt.success_rate)}% success rate`;
+          } else if (isGenerated) {
+            type = 'test_generated';
+            description = `Generated solution code, ${Math.round(attempt.success_rate)}% success`;
+          }
+
+          return {
+            id: `${attempt.id}-${index}`,
+            type,
+            title: (attempt as any).problems?.title || `Problem #${attempt.problem_id}`,
+            description,
+            time: timeAgo,
+            language: attempt.language || 'Unknown',
+            difficulty: (attempt as any).problems?.difficulty
+          };
+        });
+      } catch (error) {
+        console.warn('Failed to fetch recent activity:', error);
+        return [];
+      }
+    },
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    retry: false,
+  });
+}
+
+// Helper function to get time ago string
+function getTimeAgo(dateString: string): string {
+  const now = new Date();
+  const date = new Date(dateString);
+  const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+  
+  if (diffInMinutes < 1) return 'Just now';
+  if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
+  
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) return `${diffInHours} hours ago`;
+  
+  const diffInDays = Math.floor(diffInHours / 24);
+  return `${diffInDays} days ago`;
+}
+
+// Learning Progress Analytics
+export function useLearningProgress() {
+  return useQuery({
+    queryKey: ['learning-progress'],
+    queryFn: async () => {
+      try {
+        // Fetch problem metrics with problem details
+        const { data: metrics, error: metricsError } = await supabase
+          .from('problem_metrics')
+          .select(`
+            *,
+            problems (
+              title,
+              difficulty,
+              content_html
+            )
+          `);
+
+        if (metricsError) {
+          console.warn('Failed to fetch learning progress:', metricsError);
+          return null;
+        }
+
+        const metricsArray = metrics || [];
+        
+        // Group by difficulty and calculate progress
+        const difficultyProgress = metricsArray.reduce((acc: any, metric) => {
+          const difficulty = metric.problems?.difficulty || 'Unknown';
+          
+          if (!acc[difficulty]) {
+            acc[difficulty] = {
+              total: 0,
+              solved: 0,
+              totalSuccessRate: 0
+            };
+          }
+          
+          acc[difficulty].total++;
+          acc[difficulty].totalSuccessRate += metric.average_success_rate || 0;
+          
+          if (metric.average_success_rate >= 90) {
+            acc[difficulty].solved++;
+          }
+          
+          return acc;
+        }, {});
+
+        // Convert to skill progress format
+        const skillProgress = Object.entries(difficultyProgress).map(([difficulty, data]: [string, any]) => ({
+          skill: `${difficulty} Problems`,
+          progress: Math.round((data.solved / data.total) * 100) || 0,
+          color: getDifficultyColor(difficulty)
+        }));
+
+        // Recent learning topics - analyze recent attempts
+        const recentAttempts = await supabase
+          .from('solution_attempts')
+          .select('problem_id, success_rate, created_at, problems(title)')
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        const recentLearning = (recentAttempts.data || [])
+          .slice(0, 5)
+          .map(attempt => ({
+            topic: (attempt as any).problems?.title || `Problem #${attempt.problem_id}`,
+            confidence: Math.round(attempt.success_rate || 0),
+            sessions: 1 // Could be calculated from multiple attempts
+          }));
+
+        // Overall performance calculation
+        const overallSuccessRate = metricsArray.length > 0
+          ? Math.round(metricsArray.reduce((sum, m) => sum + (m.average_success_rate || 0), 0) / metricsArray.length)
+          : 0;
+
+        return {
+          skillProgress,
+          recentLearning,
+          overallPerformance: overallSuccessRate,
+          improvement: 5 // Could be calculated from historical data
+        };
+      } catch (error) {
+        console.warn('Failed to fetch learning progress:', error);
+        return null;
+      }
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false,
+  });
+}
+
+// Helper function for difficulty colors
+function getDifficultyColor(difficulty: string): string {
+  switch (difficulty.toLowerCase()) {
+    case 'easy': return 'bg-green-500';
+    case 'medium': return 'bg-yellow-500';
+    case 'hard': return 'bg-red-500';
+    default: return 'bg-blue-500';
+  }
+}
+
 // Performance analytics by difficulty
 export function usePerformanceAnalytics() {
   return useQuery({

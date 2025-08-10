@@ -101,6 +101,12 @@ export interface TestExecutionResponse {
   failed_tests: number
   test_results: TestResult[]
   overall_status: string
+  
+  // Rate limiting properties
+  api_limit_reached?: boolean
+  remaining_time?: number
+  message?: string
+  tests_not_executed?: number
 }
 
 export interface ReinforcementResponse {

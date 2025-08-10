@@ -1009,13 +1009,30 @@ export function AgentCollaborationModal({
                                             </div>
                                           </div>
 
+                                          {/* API Rate Limit Notice */}
+                                          {testData.api_limit_reached && (
+                                            <div className="bg-yellow-50 border border-yellow-200 p-3 rounded">
+                                              <div className="flex items-center space-x-2 mb-2">
+                                                <span className="text-yellow-600">🚫</span>
+                                                <span className="text-sm font-medium text-yellow-800">Judge0 API Rate Limit Reached</span>
+                                              </div>
+                                              <div className="text-xs text-yellow-700">
+                                                • Completed {testData.total_tests} test cases before limit was reached
+                                                <br />
+                                                • {testData.tests_not_executed} test cases were not executed
+                                                <br />
+                                                • {testData.remaining_time ? `Please try again in ${Math.ceil(testData.remaining_time / 60)} minutes` : 'Please try again later'}
+                                              </div>
+                                            </div>
+                                          )}
+                                          
                                           {/* Summary */}
                                           <div className="bg-gray-50 p-3 rounded border">
                                             <div className="text-lg font-bold text-gray-900">
-                                              {testData.summary}
+                                              {testData.summary || (testData.api_limit_reached ? 'Rate Limited' : 'No summary')}
                                             </div>
                                             <div className="text-sm text-gray-600 mt-1">
-                                              {testData.overall_status} • {testData.passed_tests} passed, {testData.failed_tests} failed
+                                              {testData.api_limit_reached ? 'API Rate Limit Reached' : testData.overall_status} • {testData.passed_tests} passed, {testData.failed_tests} failed
                                             </div>
                                           </div>
 
@@ -1023,7 +1040,7 @@ export function AgentCollaborationModal({
                                           <div className="space-y-2">
                                             <div className="text-sm font-medium text-gray-700">Individual Test Cases:</div>
                                             <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                                              {testData.test_results.map((test: any, index: number) => (
+                                              {testData.test_results && testData.test_results.length > 0 ? testData.test_results.map((test: any, index: number) => (
                                                 <div 
                                                   key={index} 
                                                   className={`p-3 rounded-lg border ${
@@ -1087,7 +1104,14 @@ export function AgentCollaborationModal({
                                                     )}
                                                   </div>
                                                 </div>
-                                              ))}
+                                              )) : (
+                                                <div className="p-4 text-center text-gray-500">
+                                                  {testData.api_limit_reached ? 
+                                                    'No test cases to display - API rate limit reached before execution' : 
+                                                    'No test results available'
+                                                  }
+                                                </div>
+                                              )}
                                             </div>
                                           </div>
                                         </>

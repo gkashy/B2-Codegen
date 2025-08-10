@@ -495,6 +495,15 @@ export default function AISolvingInterface({ problemId }: AISolvingInterfaceProp
         const successRate = testResults.success_rate;
         setCurrentSuccessRate(successRate);
         
+        // Check for API rate limit reached
+        if (testResults.api_limit_reached) {
+          console.log('🚫 Judge0 API rate limit reached, stopping execution');
+          addAgentInteraction('system', 'api_limit_reached', 
+            `🚫 Judge0 API Rate Limit Reached\n\n${testResults.message}\n\nCompleted ${testResults.total_tests} test cases before limit was reached. ${testResults.tests_not_executed} test cases were not executed.\n\n${testResults.remaining_time ? `Please try again in ${Math.ceil(testResults.remaining_time / 60)} minutes.` : 'Please try again later.'}`
+          );
+          break; // Stop execution when rate limit is reached
+        }
+
         // Store full test results data for detailed display
         addAgentInteraction('tester', 'run_tests', 
           JSON.stringify({
@@ -817,9 +826,14 @@ If there are obvious issues, mention them briefly.`;
       const testResults = await response.json();
       console.log('✅ Test results for selected cases:', testResults);
       
-      // You could display these results in a special modal or section
-      // For now, we'll just log them
-      alert(`Test Results:\n${testResults.passed_tests}/${testResults.total_tests} tests passed`);
+      // Check for API rate limit
+      if (testResults.api_limit_reached) {
+        alert(`🚫 Judge0 API Rate Limit Reached\n\n${testResults.message}\n\nCompleted ${testResults.total_tests} test cases before limit was reached.\n${testResults.tests_not_executed} test cases were not executed.\n\n${testResults.remaining_time ? `Please try again in ${Math.ceil(testResults.remaining_time / 60)} minutes.` : 'Please try again later.'}`);
+      } else {
+        // You could display these results in a special modal or section
+        // For now, we'll just log them
+        alert(`Test Results:\n${testResults.passed_tests}/${testResults.total_tests} tests passed`);
+      }
       
     } catch (error) {
       console.error('❌ Testing with selected cases failed:', error);
@@ -2474,10 +2488,30 @@ If there are obvious issues, mention them briefly.`;
             
             {results && (
               <div className="space-y-4">
+                {/* API Rate Limit Notice */}
+                {results.api_limit_reached && (
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg dark:bg-yellow-900/20 dark:border-yellow-800">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-4 text-yellow-600">🚫</div>
+                      <span className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Judge0 API Rate Limit Reached</span>
+                    </div>
+                    <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-2">
+                      {results.message}
+                    </p>
+                    <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+                      • Completed {results.total_tests} test cases before limit was reached
+                      <br />
+                      • {results.tests_not_executed} test cases were not executed
+                      <br />
+                      • {results.remaining_time ? `Please try again in ${Math.ceil(results.remaining_time / 60)} minutes` : 'Please try again later'}
+                    </div>
+                  </div>
+                )}
+                
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Overall Status</span>
-                  <Badge variant={results.success_rate === 100 ? 'default' : 'secondary'}>
-                    {results.success_rate}% Success
+                  <Badge variant={results.success_rate === 100 ? 'default' : (results.api_limit_reached ? 'outline' : 'secondary')}>
+                    {results.api_limit_reached ? 'Rate Limited' : `${results.success_rate}% Success`}
                   </Badge>
                 </div>
                 
@@ -2505,7 +2539,7 @@ If there are obvious issues, mention them briefly.`;
                 <div className="space-y-2">
                   <span className="text-sm font-medium">Test Cases:</span>
                   <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                    {results.test_results.map((test, index) => (
+                    {results.test_results && results.test_results.length > 0 ? results.test_results.map((test, index) => (
                       <div 
                         key={index} 
                         className={`p-3 rounded-lg border ${
@@ -2531,7 +2565,14 @@ If there are obvious issues, mention them briefly.`;
                           )}
                         </div>
                       </div>
-                    ))}
+                    )) : (
+                      <div className="p-4 text-center text-muted-foreground">
+                        {results.api_limit_reached ? 
+                          'No test cases to display - API rate limit reached before execution' : 
+                          'No test results available'
+                        }
+                      </div>
+                    )}
                   </div>
                 </div>
                 
