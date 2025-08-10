@@ -52,7 +52,7 @@ export default function LearningAnalytics() {
             <TrendingUp className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{Math.round((metrics?.averageSuccessRate || 0) * 100)}%</div>
+            <div className="text-2xl font-bold">{Math.round(metrics?.averageSuccessRate || 0)}%</div>
             <p className="text-xs text-muted-foreground">{metrics?.totalAttempts || 0} total attempts</p>
           </CardContent>
         </Card>
@@ -110,9 +110,9 @@ export default function LearningAnalytics() {
                       <Badge 
                         variant="outline" 
                         className={`text-xs ${
-                          item.category === 'easy' ? 'border-green-500/20 text-green-500' :
-                          item.category === 'medium' ? 'border-yellow-500/20 text-yellow-500' :
-                          item.category === 'hard' ? 'border-red-500/20 text-red-500' :
+                          item.category?.toLowerCase().includes('easy') ? 'border-green-500/20 text-green-500' :
+                          item.category?.toLowerCase().includes('medium') ? 'border-yellow-500/20 text-yellow-500' :
+                          item.category?.toLowerCase().includes('hard') ? 'border-red-500/20 text-red-500' :
                           'border-gray-500/20 text-gray-500'
                         }`}
                       >
@@ -121,7 +121,6 @@ export default function LearningAnalytics() {
                     </div>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <span>Success: {item.successRate}%</span>
-                      <span>Score: {item.avgTime}</span>
                     </div>
                   </div>
                   <Progress value={item.successRate} className="h-[8px]" />
