@@ -80,17 +80,22 @@ export function useProblemsWithMetrics(options?: {
         problemsQuery = problemsQuery.in('difficulty', uniqueDifficulties);
       }
 
-      // Execute both queries
-      const [problemsResult, metricsResult] = await Promise.all([
+      // Execute queries including test case counts from actual test_cases table
+      const [problemsResult, metricsResult, testCasesResult] = await Promise.all([
         problemsQuery,
-        supabase.from('problem_metrics').select('*')
+        supabase.from('problem_metrics').select('*'),
+        supabase.from('test_cases')
+          .select('problem_id, source, is_active')
+          .eq('is_active', true)
       ]);
 
       console.log('Database results:', { 
         problemsCount: problemsResult.data?.length || 0, 
         metricsCount: metricsResult.data?.length || 0,
+        testCasesCount: testCasesResult.data?.length || 0,
         problemsError: problemsResult.error,
         metricsError: metricsResult.error,
+        testCasesError: testCasesResult.error,
         appliedFilters: {
           search: options?.search,
           difficulty: options?.difficulty
@@ -103,6 +108,31 @@ export function useProblemsWithMetrics(options?: {
 
       const problems = problemsResult.data || [];
       const metrics = metricsResult.data || [];
+      const testCases = testCasesResult.data || [];
+      
+      // Calculate test case counts by problem and source
+      const testCaseStats = testCases.reduce((acc, tc) => {
+        if (!acc[tc.problem_id]) {
+          acc[tc.problem_id] = {
+            total: 0,
+            migrated_legacy: 0,
+            llm_generated: 0
+          };
+        }
+        acc[tc.problem_id].total++;
+        if (tc.source === 'migrated_legacy') {
+          acc[tc.problem_id].migrated_legacy++;
+        } else if (tc.source === 'llm_generated') {
+          acc[tc.problem_id].llm_generated++;
+        }
+        return acc;
+      }, {} as Record<number, { total: number; migrated_legacy: number; llm_generated: number }>);
+
+      // Debug log test case statistics
+      console.log('Test case statistics:', Object.entries(testCaseStats).slice(0, 5).map(([problemId, stats]) => ({
+        problemId: parseInt(problemId),
+        ...stats
+      })));
 
       // Debug: log difficulty values in database
       if (problems.length > 0) {
@@ -127,13 +157,30 @@ export function useProblemsWithMetrics(options?: {
         }
       }
 
-      // Combine problems with their metrics
+      // Combine problems with their metrics and actual test case counts
       const problemsWithMetrics: ProblemWithMetrics[] = problems.map(problem => {
         const problemMetrics = metrics.find(m => m.problem_id === problem.id);
+        const testCaseData = testCaseStats[problem.id];
         
         return {
           ...problem,
-          metrics: problemMetrics || undefined
+          metrics: problemMetrics ? {
+            ...problemMetrics,
+            // Override test case counts with actual counts from test_cases table
+            total_test_cases: testCaseData?.total || 0,
+            generated_test_cases: testCaseData?.llm_generated || 0,
+            original_test_cases: testCaseData?.migrated_legacy || 0
+          } : testCaseData ? {
+            // If no metrics exist, create minimal metrics with test case counts
+            total_attempts: 0,
+            successful_attempts: 0,
+            average_success_rate: 0,
+            average_execution_time: 0,
+            actual_difficulty_score: 0,
+            total_test_cases: testCaseData.total,
+            generated_test_cases: testCaseData.llm_generated,
+            original_test_cases: testCaseData.migrated_legacy
+          } : undefined
         };
       });
 
