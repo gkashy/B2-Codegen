@@ -144,15 +144,15 @@ CORE MISSION:
 Transform raw input_data arrays into individual function parameters that match the function signature exactly.
 
 STEP-BY-STEP PROCESS:
-1. 📋 READ the function signature to understand parameter types and names
-2. 🔢 COUNT how many input parameters the function expects
-3. 📊 ANALYZE the raw input_data structure 
-4. ✂️ SPLIT/FORMAT the data to match each parameter exactly
-5. ✅ VALIDATE that formatted_inputs length matches expected parameter count
+1.  READ the function signature to understand parameter types and names
+2.  COUNT how many input parameters the function expects
+3.  ANALYZE the raw input_data structure 
+4.  SPLIT/FORMAT the data to match each parameter exactly
+5.  VALIDATE that formatted_inputs length matches expected parameter count
 
 TRANSFORMATION EXAMPLES BY PROBLEM TYPE:
 
-🔢 Array Problems:
+ Array Problems:
 Function: twoSum(nums, target)
 Raw input_data: [[2,7,11,15], 9]
 Formatted: [2,7,11,15], 9 (array and number)
@@ -161,7 +161,7 @@ Function: findMedianSortedArrays(nums1, nums2)
 Raw input_data: [[1,3], [2]]
 Formatted: [1,3], [2] (two separate arrays)
 
-🔤 String Problems:
+ String Problems:
 Function: longestPalindrome(s)
 Raw input_data: ["babad"]
 Formatted: "babad" (single string)
@@ -170,7 +170,7 @@ Function: isAnagram(s, t)
 Raw input_data: ["anagram", "nagaram"]  
 Formatted: "anagram", "nagaram" (two strings)
 
-🌳 Tree Problems:
+ Tree Problems:
 Function: maxDepth(root)
 Raw input_data: [[3,9,20,null,null,15,7]]
 Formatted: [3,9,20,null,null,15,7] (tree array representation)
@@ -179,7 +179,7 @@ Function: lowestCommonAncestor(root, p, q)
 Raw input_data: [[6,2,8,0,4,7,9,null,null,3,5], 2, 8]
 Formatted: [6,2,8,0,4,7,9,null,null,3,5], 2, 8 (tree + two values)
 
-🔗 Linked List Problems:
+ Linked List Problems:
 Function: reverseList(head)
 Raw input_data: [[1,2,3,4,5]]
 Formatted: [1,2,3,4,5] (list array representation)
@@ -188,7 +188,7 @@ Function: mergeTwoLists(list1, list2)
 Raw input_data: [[1,2,4], [1,3,4]]
 Formatted: [1,2,4], [1,3,4] (two separate lists)
 
-📊 Matrix/2D Problems:
+ Matrix/2D Problems:
 Function: solveSudoku(board)
 Raw input_data: [[[5,3,0],[6,0,0]]]
 Formatted: [[5,3,0],[6,0,0]] (single 2D array)
@@ -197,7 +197,7 @@ Function: searchMatrix(matrix, target)
 Raw input_data: [[[1,4,7],[2,5,8]], 5]
 Formatted: [[1,4,7],[2,5,8]], 5 (matrix and target)
 
-📈 Graph Problems:
+ Graph Problems:
 Function: canFinish(numCourses, prerequisites)
 Raw input_data: [2, [[1,0]]]
 Formatted: 2, [[1,0]] (number and 2D array)
@@ -206,7 +206,7 @@ Function: numIslands(grid)
 Raw input_data: [[["1","1","0"],["0","1","0"]]]
 Formatted: [["1","1","0"],["0","1","0"]] (single 2D grid)
 
-⏰ Interval Problems:
+ Interval Problems:
 Function: merge(intervals)
 Raw input_data: [[[1,3],[2,6],[8,10]]]
 Formatted: [[1,3],[2,6],[8,10]] (array of intervals)
@@ -215,7 +215,7 @@ Function: canAttendMeetings(intervals)
 Raw input_data: [[[0,30],[5,10],[15,20]]]
 Formatted: [[0,30],[5,10],[15,20]] (array of intervals)
 
-🔢 Math/Multiple Types:
+ Math/Multiple Types:
 Function: myPow(x, n)
 Raw input_data: [2.0, 10]
 Formatted: 2.0, 10 (float and integer)
@@ -254,7 +254,7 @@ EXPECTED OUTPUT FORMATTING:
         ],
         max_tokens: 3000,
         temperature: 0.1,  // Low temperature for consistent parsing
-        stream: true       // 🚀 ENABLE STREAMING!
+        stream: true       // ENABLE STREAMING!
       })
     });
 
@@ -267,7 +267,7 @@ EXPECTED OUTPUT FORMATTING:
     const decoder = new TextDecoder();
     let content = '';
     
-    console.log('🚀 Processing streaming response from DeepSeek...');
+    console.log(' Processing streaming response from DeepSeek...');
     
     try {
       while (true) {
@@ -298,13 +298,13 @@ EXPECTED OUTPUT FORMATTING:
       reader.releaseLock();
     }
     
-    console.log(`✅ Received ${content.length} characters from streaming response`);
+    console.log(` Received ${content.length} characters from streaming response`);
     
     // Clean any markdown formatting
     content = cleanLLMResponse(content);
     
     const parsedResults = JSON.parse(content);
-    console.log(`✅ LLM successfully parsed ${parsedResults.length} test cases`);
+    console.log(` LLM successfully parsed ${parsedResults.length} test cases`);
     
     return parsedResults;
     
@@ -313,7 +313,7 @@ EXPECTED OUTPUT FORMATTING:
     
     // Fallback: Try non-streaming request
     try {
-      console.log('🔄 Attempting non-streaming fallback...');
+      console.log(' Attempting non-streaming fallback...');
       const fallbackResponse = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -343,7 +343,7 @@ EXPECTED OUTPUT FORMATTING:
       fallbackContent = cleanLLMResponse(fallbackContent);
       
       const fallbackResults = JSON.parse(fallbackContent);
-      console.log(`✅ Non-streaming fallback succeeded with ${fallbackResults.length} test cases`);
+      console.log(` Non-streaming fallback succeeded with ${fallbackResults.length} test cases`);
       return fallbackResults;
       
     } catch (fallbackError) {
@@ -354,7 +354,7 @@ EXPECTED OUTPUT FORMATTING:
 }
 
 async function processTestCasesWithPatternDetection(problem, rawTestCases) {
-  console.log('🔍 Using pattern detection + LLM validation for large dataset');
+  console.log(' Using pattern detection + LLM validation for large dataset');
   
   // Analyze first few test cases with LLM to detect pattern
   const sampleCases = rawTestCases.slice(0, 3);
@@ -487,7 +487,7 @@ function processTestCaseHeuristically(testCase, problem) {
   let formattedInputs;
   let reasoning;
   
-  // 🧠 ENHANCED HEURISTIC LOGIC for different problem types
+  //  ENHANCED HEURISTIC LOGIC for different problem types
   
   // Case 1: Single parameter expected
   if (expectedInputParams === 1) {
@@ -758,4 +758,4 @@ function extractContentOnlyFromString(str) {
 // Supabase Edge Function entry point
 // Deploy this as: supabase functions deploy test-case-preprocessor
 
-console.log('🚀 Test Case Preprocessor Edge Function initialized');
+console.log(' Test Case Preprocessor Edge Function initialized');
