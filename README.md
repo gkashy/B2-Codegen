@@ -3,6 +3,12 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 ## Getting Started
 
 
+You can have the full experience on this URL:
+
+https://b2-codegen.vercel.app/
+
+or if you wish to runn locally
+
 install libraries
 
 ```bash
